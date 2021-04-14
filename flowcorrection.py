@@ -16,7 +16,7 @@ def extract_shot(shot_file: TextIO) -> Dict[str, List[float]]:
         'espresso_flow {',
         'espresso_flow_weight {',
         'espresso_pressure {']
-    data = dict()
+    data = {}
     for line in shot_file:
         if any(line.startswith(target) for target in target_labels):
             buf = line.replace('{', '')
@@ -32,14 +32,11 @@ def extract_shot(shot_file: TextIO) -> Dict[str, List[float]]:
     if len(data) != len(target_labels):
         print('WARNING: shot file not extracted properly!')
         return dict()
-
-    if len(data['espresso_flow']) == len(data['espresso_flow_weight']):
-        trimmed = data['espresso_elapsed'][:len(data['espresso_flow'])]
-    else:
-        print('WARNING: flow and weight stamps is showing inconsistency. using shorter one!')
-        shorter_len = min(len(data['espresso_flow']), len(data['espresso_flow_weight']))
-        trimmed = data['espresso_elapsed'][:shorter_len]
-    data['espresso_elapsed'] = trimmed
+    shortest_len = min([len(it) for it in data.values()])
+    data['espresso_elapsed'] = data['espresso_elapsed'][:shortest_len]
+    data['espresso_flow'] = data['espresso_flow'][:shortest_len]
+    data['espresso_flow_weight'] = data['espresso_flow_weight'][:shortest_len]
+    data['espresso_pressure'] = data['espresso_pressure'][:shortest_len]
     return data
 
 
