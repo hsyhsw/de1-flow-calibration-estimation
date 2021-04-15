@@ -5,7 +5,6 @@ from typing import TextIO, Dict, List, Tuple
 from scipy import optimize
 from statistics import median
 from functools import partial
-import sys
 import time
 import matplotlib
 matplotlib.use('TkAgg')
@@ -54,52 +53,14 @@ class Shot:
         return data
 
 
-def calculate_difference(t, f, w, calc_threshold=0.5) -> List[float]:
-    diffs = list()
-    for z in zip(t, f, w):  # time, flow, weight
-        if z[1] < 0.1 or z[2] < 0.1:
-            diffs.append(0.0)
-        else:  # d = weight / flow
-            if z[1] > calc_threshold and z[2] > calc_threshold:
-                d = z[2] / z[1]
-            else:  # flow or weight is too low
-                d = 0.0
-            diffs.append(d)
-    return diffs
-
-
-def stable_weight_time_begin(t, w, weight_threshold) -> float:
-    for z in zip(t, w):  # time, weight
-        if z[1] > weight_threshold:
-            return z[0]
-    return t[0]  # failed
-
-
-def estimate_optimal(t, f, w, d, calc_t_window) -> float:
-    def mse_windowed(flow_correction: float) -> float:
-        c = 0
-        accum = 0.0
-        for z in filter(lambda _z: calc_t_window[0] <= _z[0] < calc_t_window[1], zip(t, f, w)):
-            accum += (z[1] * flow_correction - z[2]) ** 2
-            c += 1
-        return accum / c
-    diff_median = median(filter(lambda v: v > 0.01, d))
-    opt = optimize.minimize(mse_windowed, diff_median, method='Nelder-Mead')
-    if opt.status == 0:
-        return opt.x
-    else:
-        print('WARNING: optimization failed. using diff median.')
-        return diff_median
-
-
 class Analysis:
     def __init__(self, s: Shot):
-        self._diffs = calculate_difference(s.time, s.flow, s.weight)
+        self._diffs = self._calculate_difference(s.time, s.flow, s.weight)
 
-        stable_weight_t = stable_weight_time_begin(s.time, s.weight, 0.7)
+        stable_weight_t = self._stable_weight_time_begin(s.time, s.weight, 0.7)
         self._initial_window = (stable_weight_t, s.time[-1])
 
-        self._calculate_optimal_preped = partial(estimate_optimal, s.time, s.flow, s.weight, self._diffs)
+        self._calculate_optimal_preped = partial(self._estimate_optimal, s.time, s.flow, s.weight, self._diffs)
         self._corr_suggestion = self._calculate_optimal_preped(self._initial_window)
 
         # temp storage for redrawn objects
@@ -160,6 +121,44 @@ class Analysis:
         self._window_fill = self._x_axis.axvspan(*window_val, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
         self._sugg_line.set_ydata(self._calculate_optimal_preped(window_val) * 10)
         self._main_fig.canvas.draw_idle()
+
+    @staticmethod
+    def _calculate_difference(t, f, w, calc_threshold=0.5) -> List[float]:
+        diffs = list()
+        for z in zip(t, f, w):  # time, flow, weight
+            if z[1] < 0.1 or z[2] < 0.1:
+                diffs.append(0.0)
+            else:  # d = weight / flow
+                if z[1] > calc_threshold and z[2] > calc_threshold:
+                    d = z[2] / z[1]
+                else:  # flow or weight is too low
+                    d = 0.0
+                diffs.append(d)
+        return diffs
+
+    @staticmethod
+    def _stable_weight_time_begin(t, w, weight_threshold) -> float:
+        for z in zip(t, w):  # time, weight
+            if z[1] > weight_threshold:
+                return z[0]
+        return t[0]  # failed
+
+    @staticmethod
+    def _estimate_optimal(t, f, w, d, calc_t_window) -> float:
+        def mse_windowed(flow_correction: float) -> float:
+            c = 0
+            accum = 0.0
+            for z in filter(lambda _z: calc_t_window[0] <= _z[0] < calc_t_window[1], zip(t, f, w)):
+                accum += (z[1] * flow_correction - z[2]) ** 2
+                c += 1
+            return accum / c
+        diff_median = median(filter(lambda v: v > 0.01, d))
+        opt = optimize.minimize(mse_windowed, diff_median, method='Nelder-Mead')
+        if opt.status == 0:
+            return opt.x
+        else:
+            print('WARNING: optimization failed. using diff median.')
+            return diff_median
 
 
 if __name__ == '__main__':
