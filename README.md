@@ -1,8 +1,10 @@
 # de1-flow-calibration-estimation
-Sample shot files are in the example directory.
 ``` 
-(venv) de1-flow-calibration-estimation> python -m flowcorrection example/d.shot
+(venv) de1-flow-calibration-estimation> python -m flowcorrection
 ```
+Pick a shot file in the dialog, done!
+
+Sample shot files are in the example directory.
 
 ![flowcorrection](figure.png)
 
