@@ -1,6 +1,11 @@
 from tkinter import filedialog
 from matplotlib import pyplot as plt
-from matplotlib.widgets import Slider, RangeSlider
+from matplotlib.widgets import Slider
+try:  # try importing RangeSlider from matplotlib package
+    from matplotlib.widgets import RangeSlider
+except:  # ERROR: old matplotlib. using copied one to support Pydroid
+    print('WARNING: matplotlib is old!')
+    from mpl341_compat import RangeSlider
 from typing import TextIO, Dict, List, Tuple
 from scipy import optimize
 from statistics import median

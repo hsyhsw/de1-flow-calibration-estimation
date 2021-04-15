@@ -6,7 +6,8 @@ setup(
     version='',
     install_requires=[
         'matplotlib',
-        'scipy'
+        'scipy',
+        'numpy'
     ],
     url='',
     license='',
