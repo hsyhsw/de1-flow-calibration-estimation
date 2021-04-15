@@ -1,3 +1,4 @@
+from tkinter import filedialog
 from matplotlib import pyplot as plt
 from matplotlib.widgets import Slider, RangeSlider
 from typing import TextIO, Dict, List, Tuple
@@ -162,11 +163,8 @@ class Analysis:
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('give me .shot file!')
-        exit(1)
-
-    with open(sys.argv[1]) as shot_file:
+    file_name = filedialog.askopenfilename()
+    with open(file_name) as shot_file:
         if not shot_file.name.endswith('.shot'):
             print('%s doesn\'t seem like a proper shot file.' % shot_file.name)
             exit(2)
