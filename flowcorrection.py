@@ -1,6 +1,6 @@
 from matplotlib import pyplot as plt
 from matplotlib.widgets import Slider, RangeSlider
-from typing import TextIO, Dict, List
+from typing import TextIO, Dict, List, Tuple
 from scipy import optimize
 from statistics import median
 from functools import partial
@@ -10,34 +10,47 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 
-def extract_shot(shot_file: TextIO) -> Dict[str, List[float]]:
-    target_labels = [
-        'espresso_elapsed {',
-        'espresso_flow {',
-        'espresso_flow_weight {',
-        'espresso_pressure {']
-    data = {}
-    for line in shot_file:
-        if any(line.startswith(target) for target in target_labels):
-            buf = line.replace('{', '')
-            buf = buf.replace('}', '')
-            splits = buf.split()
-            label = splits[0]
-            vals = list(float(v) for v in splits[1:])
-            data[label] = vals
-        if len(data) == len(target_labels):
-            break
+class Shot:
+    def __init__(self, shot_time: int, espresso_values: Dict[str, List[float]]):
+        self.shot_time = time.ctime(shot_time)
+        self.time = espresso_values['espresso_elapsed']
+        self.pressure = espresso_values['espresso_pressure']
+        self.flow = espresso_values['espresso_flow']
+        self.weight = espresso_values['espresso_flow_weight']
 
-    # trim time stamps, with some assertions
-    if len(data) != len(target_labels):
-        print('WARNING: shot file not extracted properly!')
-        return dict()
-    shortest_len = min([len(it) for it in data.values()])
-    data['espresso_elapsed'] = data['espresso_elapsed'][:shortest_len]
-    data['espresso_flow'] = data['espresso_flow'][:shortest_len]
-    data['espresso_flow_weight'] = data['espresso_flow_weight'][:shortest_len]
-    data['espresso_pressure'] = data['espresso_pressure'][:shortest_len]
-    return data
+    @staticmethod
+    def parse(shot_file: TextIO):
+        shot_time_raw = int(shot_file.readline().split()[1])  # first line should be clock.. plz!
+        extr = Shot._extract_raw(shot_file)
+        return Shot(shot_time_raw, extr)
+
+    @staticmethod
+    def _extract_raw(shot_file: TextIO) -> Dict[str, List[float]]:
+        target_labels = [
+            'espresso_elapsed {',
+            'espresso_flow {',
+            'espresso_flow_weight {',
+            'espresso_pressure {']
+        data = {}
+        for line in shot_file:
+            if any(line.startswith(target) for target in target_labels):
+                buf = line.replace('{', '')
+                buf = buf.replace('}', '')
+                splits = buf.split()
+                label = splits[0]
+                vals = list(float(v) for v in splits[1:])
+                data[label] = vals
+            if len(data) == len(target_labels):
+                break
+
+        # trim datasets, with some assertions
+        if len(data) != len(target_labels):
+            print('WARNING: shot file not extracted properly!')
+            return dict()
+        shortest_len = min([len(it) for it in data.values()])
+        for k in data.keys():
+            data[k] = data[k][:shortest_len]
+        return data
 
 
 def calculate_difference(t, f, w, calc_threshold=0.5) -> List[float]:
@@ -78,6 +91,76 @@ def estimate_optimal(t, f, w, d, calc_t_window) -> float:
         return diff_median
 
 
+class Analysis:
+    def __init__(self, s: Shot):
+        self._diffs = calculate_difference(s.time, s.flow, s.weight)
+
+        stable_weight_t = stable_weight_time_begin(s.time, s.weight, 0.7)
+        self._initial_window = (stable_weight_t, s.time[-1])
+
+        self._calculate_optimal_preped = partial(estimate_optimal, s.time, s.flow, s.weight, self._diffs)
+        self._corr_suggestion = self._calculate_optimal_preped(self._initial_window)
+
+        # temp storage for redrawn objects
+        self._main_fig = None
+        self._x_axis = None
+        self._window_fill = None
+        self._flow_plt = None
+        self._sugg_line = None
+        self._corr_line = None
+
+    def show(self):
+        # graph things...
+        self._main_fig, self._x_axis = plt.subplots()
+        self._x_axis.set_xlabel('seconds')
+        plt.title('Shot at [%s]' % s.shot_time)
+
+        self._flow_plt, = plt.plot(s.time, s.flow, label='flow (ml/s)', color='blue', lw=3.5)
+        plt.plot(s.time, s.weight, label='weight (g/s)', color='brown', lw=3.5)
+        plt.plot(s.time, s.pressure, label='pressure (bar)', color='green')
+        plt.plot(s.time, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
+        self._sugg_line = plt.axhline(self._corr_suggestion * 10, label='suggestion (x10)', color='pink', linestyle='dashed')
+        self._corr_line = plt.axhline(10.0, label='correction (x10)', color='magenta', linestyle='dotted')
+
+        # sliders
+        plt.subplots_adjust(right=0.85, bottom=0.18)
+        # correction slider
+        correction_ax = plt.axes([0.9, 0.2, 0.03, 0.65])
+        correction_slider = Slider(correction_ax, 'correction\nvalue', orientation='vertical',
+                                   valinit=1.0, valmin=0.3, valmax=2.5, valstep=0.01)
+
+        correction_slider.on_changed(partial(Analysis._update_flow, self, s.flow))
+
+        # window slider
+        window_ax = plt.axes([0.16, 0.05, 0.66, 0.03])
+        try:
+            window_slider = RangeSlider(window_ax, 'opt.\nwindow',
+                                        valinit=self._initial_window, valmin=0.0, valmax=s.time[-1], valstep=0.1)
+        except:  # FIXME: matplotlib bug: move slider to see the correct calculations
+            print('ERROR: matplotlib bug: move slider to see the correct calculations.')
+            window_slider = RangeSlider(window_ax, 'opt.\nwindow', valmin=0.0, valmax=s.time[-1], valstep=0.1)
+        window_slider.valtext.set_visible(False)
+
+        # to be redrawn on slider move... I know it's dirty!!
+        self._window_fill = self._x_axis.axvspan(*self._initial_window, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
+        window_slider.on_changed(partial(Analysis._update_window, self))
+
+        self._x_axis.legend()
+        plt.show()
+
+    def _update_flow(self, base_flow: List[float], correction_val: float):
+        self._flow_plt.set_ydata([val * correction_val for val in base_flow])
+        self._corr_line.set_ydata(correction_val * 10)
+        self._main_fig.canvas.draw_idle()
+
+    def _update_window(self, window_val: Tuple[float, float]):
+        # global window_fill
+        self._window_fill.remove()
+        self._window_fill = self._x_axis.axvspan(*window_val, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
+        self._sugg_line.set_ydata(self._calculate_optimal_preped(window_val) * 10)
+        self._main_fig.canvas.draw_idle()
+
+
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print('give me .shot file!')
@@ -87,69 +170,5 @@ if __name__ == '__main__':
         if not shot_file.name.endswith('.shot'):
             print('%s doesn\'t seem like a proper shot file.' % shot_file.name)
             exit(2)
-
-        shot_time = time.ctime(int(shot_file.readline().split()[1]))  # first line should be clock.. plz!
-        extr = extract_shot(shot_file)
-
-    coffee_time = extr['espresso_elapsed']
-    coffee_pressure = extr['espresso_pressure']
-    coffee_flow = extr['espresso_flow']
-    coffee_weight = extr['espresso_flow_weight']
-
-    diffs = calculate_difference(coffee_time, coffee_flow, coffee_weight)
-    stable_weight_t = stable_weight_time_begin(coffee_time, coffee_weight, 0.7)
-    initial_window = (stable_weight_t, coffee_time[-1])
-
-    calculate_optimal_preped = partial(estimate_optimal, coffee_time, coffee_flow, coffee_weight, diffs)
-    corr_suggestion = calculate_optimal_preped(initial_window)
-
-    # graph things...
-    fig, ax = plt.subplots()
-    ax.set_xlabel('seconds')
-    plt.title('Shot at [%s]' % shot_time)
-
-    flow_plt, = plt.plot(coffee_time, coffee_flow, label='flow (ml/s)', color='blue', lw=3.5)
-    plt.plot(coffee_time, coffee_weight, label='weight (g/s)', color='brown', lw=3.5)
-    plt.plot(coffee_time, coffee_pressure, label='pressure (bar)', color='green')
-    plt.plot(coffee_time, [v * 10 for v in diffs], label='difference (x10)', color='red')
-    sugg_line = plt.axhline(corr_suggestion * 10, label='suggestion (x10)', color='pink', linestyle='dashed')
-    corr_line = plt.axhline(10.0, label='correction (x10)', color='magenta', linestyle='dotted')
-
-    # sliders
-    plt.subplots_adjust(right=0.85, bottom=0.18)
-    # correction slider
-    correction_ax = plt.axes([0.9, 0.2, 0.03, 0.65])
-    correction_slider = Slider(correction_ax, 'correction\nvalue', orientation='vertical',
-                               valinit=1.0, valmin=0.3, valmax=2.5, valstep=0.01)
-
-    def update_flow(correction_val: float):
-        flow_plt.set_ydata([val * correction_val for val in coffee_flow])
-        corr_line.set_ydata(correction_val * 10)
-        fig.canvas.draw_idle()
-    correction_slider.on_changed(update_flow)
-
-    # window slider
-    window_ax = plt.axes([0.16, 0.05, 0.66, 0.03])
-    try:
-        window_slider = RangeSlider(window_ax, 'opt.\nwindow',
-                                    valinit=initial_window, valmin=0.0, valmax=coffee_time[-1], valstep=0.1)
-    except:  # FIXME: matplotlib bug: move slider to see the correct calculations
-        print('ERROR: matplotlib bug: move slider to see the correct calculations.')
-        window_slider = RangeSlider(window_ax, 'opt.\nwindow',
-                                    valmin=0.0, valmax=coffee_time[-1], valstep=0.1)
-    window_slider.valtext.set_visible(False)
-
-    # to be redrawn on slider move
-    window_fill = ax.axvspan(*initial_window, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
-
-    def update_window(window_val):
-        global window_fill
-        window_fill.remove()
-        window_fill = ax.axvspan(*window_val, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
-        sugg_line.set_ydata(calculate_optimal_preped(window_val) * 10)
-        sugg_line.set_label('asgasd')
-        fig.canvas.draw_idle()
-    window_slider.on_changed(update_window)
-
-    ax.legend()
-    plt.show()
+        s = Shot.parse(shot_file)
+    Analysis(s).show()
