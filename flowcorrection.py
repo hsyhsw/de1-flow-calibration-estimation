@@ -109,12 +109,8 @@ class Analysis:
 
         # window slider
         window_ax = plt.axes([0.16, 0.05, 0.66, 0.03])
-        try:
-            window_slider = RangeSlider(window_ax, 'opt.\nwindow',
-                                        valinit=self._initial_window, valmin=0.0, valmax=self.shot.time[-1], valstep=0.1)
-        except:  # FIXME: matplotlib bug: move slider to see the correct calculations
-            print('ERROR: matplotlib bug: move slider to see the correct calculations.')
-            window_slider = RangeSlider(window_ax, 'opt.\nwindow', valmin=0.0, valmax=self.shot.time[-1], valstep=0.1)
+        window_slider = RangeSlider(window_ax, 'opt.\nwindow', valmin=0.0, valmax=self.shot.time[-1], valstep=0.1)
+        window_slider.set_val(self._initial_window)
         window_slider.valtext.set_visible(False)
 
         # to be redrawn on slider move... I know it's dirty!!
