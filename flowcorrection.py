@@ -153,9 +153,10 @@ class Analysis:
 
     def _calculate_resistance(self):
         r = list()
-        for _f, _p in zip(self._smoothing(self.shot.flow), self._smoothing(self.shot.pressure)):
-            if _f > 0:
-                r.append(_p ** 0.5 / _f)
+        # using weight, not flow
+        for _w, _p in zip(self._smoothing(self.shot.weight, 15), self._smoothing(self.shot.pressure)):
+            if _w > 0:
+                r.append(_p ** 0.5 / _w)
             else:
                 r.append(0.0)
         return r
@@ -171,9 +172,8 @@ class Analysis:
         tds_series = list()
         in_extraction = False
         times = list()
-        pressures = list()
         weights = list()
-        for t, p, w in zip(self._smoothing(self.shot.time), self._smoothing(self.shot.pressure), self._smoothing(self.shot.weight)):
+        for t, p, w in zip(self._smoothing(self.shot.time), self._smoothing(self.shot.weight)):
             # collect weight vals after extraction phase starts
             if not in_extraction and extraction_threshold_weight <= w:
                 in_extraction = True
@@ -181,12 +181,11 @@ class Analysis:
                 tds_series.append(0.0)
             else:
                 times.append(t)
-                pressures.append(p)
                 weights.append(w)
-        return tds_series + self._guessimate_to_tds_weight(times, pressures, weights, estimated_tds_weight)
+        return tds_series + self._guessimate_to_tds_weight(times, weights, estimated_tds_weight)
 
     @staticmethod
-    def _guessimate_to_tds_weight(t, p, w, target_tds_weight: float) -> List[float]:
+    def _guessimate_to_tds_weight(t, w, target_tds_weight: float) -> List[float]:
         t_begin = t[0]
         t_end = t[-1]
         t_span = t_end - t_begin
