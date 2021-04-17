@@ -6,23 +6,30 @@ try:  # try importing RangeSlider from matplotlib package
 except:  # ERROR: old matplotlib. using copied one to support Pydroid
     print('WARNING: matplotlib is old!')
     from mpl341_compat import RangeSlider
-from typing import TextIO, Dict, List, Tuple
+from typing import TextIO, Dict, List, Tuple, Union, Iterable
 from scipy import optimize
+from scipy.signal import savgol_filter
 from statistics import median
 from functools import partial
 import sys
 import time
+import scipy.integrate as integration
 import matplotlib
 matplotlib.use('TkAgg')
 
 
 class Shot:
-    def __init__(self, shot_time: int, espresso_values: Dict[str, List[float]]):
+    def __init__(self, shot_time: int, espresso_values: Dict[str, Union[List[float], float]]):
         self.shot_time = time.ctime(shot_time)
-        self.time = espresso_values['espresso_elapsed']
-        self.pressure = espresso_values['espresso_pressure']
-        self.flow = espresso_values['espresso_flow']
-        self.weight = espresso_values['espresso_flow_weight']
+        self.time: List[float] = espresso_values['espresso_elapsed']
+        self.pressure: List[float] = espresso_values['espresso_pressure']
+        self.flow: List[float] = espresso_values['espresso_flow']
+        self.weight: List[float] = espresso_values['espresso_flow_weight']
+        self.bw: float = espresso_values['drink_weight']
+        if 'drink_tds' in espresso_values and espresso_values['drink_tds'] > 0.1:
+            self.tds: float = espresso_values['drink_tds']
+        else:
+            self.tds = 10.0
 
     @staticmethod
     def parse(shot_file: TextIO):
@@ -31,44 +38,65 @@ class Shot:
         return Shot(shot_time_raw, extr)
 
     @staticmethod
-    def _extract_raw(shot_file: TextIO) -> Dict[str, List[float]]:
-        target_labels = [
-            'espresso_elapsed {',
-            'espresso_flow {',
-            'espresso_flow_weight {',
-            'espresso_pressure {']
-        data = {}
+    def _extract_raw(shot_file: TextIO) -> Dict[str, Union[List[float], float]]:
+        labels = [  # (label_id_str, required_bool, vector_bool}
+            ('espresso_elapsed {', True, True),
+            ('espresso_flow {', True, True),
+            ('espresso_flow_weight {', True, True),
+            ('espresso_pressure {', True, True),
+            ('drink_weight', True, False),
+            ('drink_tds', False, False)
+        ]
+        data = dict()
+        required_fields = len([filter(lambda l: l[1], labels)])
+        required_count = 0
+        shortest_vector_len = 999999
         for line in shot_file:
-            if any(line.startswith(target) for target in target_labels):
-                buf = line.replace('{', '')
-                buf = buf.replace('}', '')
-                splits = buf.split()
-                label = splits[0]
+            line = line.strip()
+            for label, required, vector in labels:
+                if not line.startswith(label):
+                    continue
+                splits = line.replace('{', '').replace('}', '').split()
+                key = splits[0]
                 vals = list(float(v) for v in splits[1:])
-                data[label] = vals
-            if len(data) == len(target_labels):
+                if required:
+                    required_count += 1
+                if vector:
+                    data[key] = vals
+                    if len(vals) < shortest_vector_len:
+                        shortest_vector_len = len(vals)
+                else:
+                    data[key] = vals[0]
+            if len(data) == len(labels):
                 break
 
-        # trim datasets, with some assertions
-        if len(data) != len(target_labels):
+        # trim vector datasets, with some assertions
+        if required_count < required_fields:
             print('WARNING: shot file not extracted properly!')
             return dict()
-        shortest_len = min([len(it) for it in data.values()])
-        for k in data.keys():
-            data[k] = data[k][:shortest_len]
-        return data
+
+        def trim_vector(item):
+            k, v = item
+            if isinstance(v, list):
+                return k, v[:shortest_vector_len]
+            else:
+                return k, v
+        return dict(map(trim_vector, data.items()))
 
 
 class Analysis:
     def __init__(self, s: Shot, weight_threshold: float = 0.5):
         self.shot = s
 
-        self._stable_weight_t = self._stable_weight_time_begin(s.time, s.weight, weight_threshold)
+        smoothed_weight = self._smoothing(s.weight)
+        self._stable_weight_t = self._stable_weight_time_begin(s.time, smoothed_weight, weight_threshold)
         self._initial_window = (self._stable_weight_t + 0.5, s.time[-1] - 0.5)
+        self._tds_effect = self._make_tds_effect()
+        self._resistance = self._calculate_resistance()
 
         self._diffs = self._calculate_difference(s.time, s.flow, s.weight, self._stable_weight_t)
 
-        self._calculate_optimal_preped = partial(self._estimate_optimal, s.time, s.flow, s.weight, self._diffs)
+        self._calculate_optimal_preped = partial(self._estimate_optimal, s.time, s.flow, s.weight, self._tds_effect, self._diffs)
         self._corr_suggestion = self._calculate_optimal_preped(self._initial_window)
 
         # temp storage for redrawn objects
@@ -84,12 +112,15 @@ class Analysis:
         # graph things...
         self._main_fig, self._x_axis = plt.subplots()
         self._x_axis.set_xlabel('seconds')
-        plt.title('Shot at [%s]' % self.shot.shot_time)
+        plt.title('Shot at [%s] %.01fg, %.02f%% TDS' % (self.shot.shot_time, self.shot.bw, self.shot.tds))
 
         self._flow_plt, = plt.plot(self.shot.time, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
         plt.plot(self.shot.time, self.shot.weight, label='weight (g/s)', color='brown', lw=3.5)
         plt.plot(self.shot.time, self.shot.pressure, label='pressure (bar)', color='green')
+        resistance, = plt.plot(self.shot.time, [0.0] * len(self.shot.time), label='resistance', color='yellow')
+        resistance.set_ydata(self._resistance)
         plt.plot(self.shot.time, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
+        plt.plot(self.shot.time, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy')
 
         self._error_line, = plt.plot(self.shot.time, [0.0] * len(self.shot.time), label='error (x10)', color='grey')
         error_data = self._error_series(self.shot.flow, self._stable_weight_t, 10)
@@ -120,11 +151,60 @@ class Analysis:
         self._x_axis.legend()
         plt.show()
 
+    def _calculate_resistance(self):
+        r = list()
+        for _f, _p in zip(self._smoothing(self.shot.flow), self._smoothing(self.shot.pressure)):
+            if _f > 0:
+                r.append(_p ** 0.5 / _f)
+            else:
+                r.append(0.0)
+        return r
+
     def _error_series(self, target_flow: List[float], from_t: float, magnifier: int) -> List[float]:
         dat = list()
-        for z in zip(self.shot.time, self.shot.weight, target_flow):
-            dat.append(magnifier * abs(z[1] - z[2]) if from_t <= z[0] else 0.0)
+        for z in zip(self.shot.time, self.shot.weight, self._tds_effect, target_flow):
+            dat.append(magnifier * abs(z[1] - z[2] - z[3]) if from_t <= z[0] else 0.0)
         return dat
+
+    def _make_tds_effect(self, extraction_threshold_weight=0.2):
+        estimated_tds_weight = self.shot.bw * self.shot.tds / 100.0
+        tds_series = list()
+        in_extraction = False
+        times = list()
+        pressures = list()
+        weights = list()
+        for t, p, w in zip(self._smoothing(self.shot.time), self._smoothing(self.shot.pressure), self._smoothing(self.shot.weight)):
+            # collect weight vals after extraction phase starts
+            if not in_extraction and extraction_threshold_weight <= w:
+                in_extraction = True
+            if not in_extraction:
+                tds_series.append(0.0)
+            else:
+                times.append(t)
+                pressures.append(p)
+                weights.append(w)
+        return tds_series + self._guessimate_to_tds_weight(times, pressures, weights, estimated_tds_weight)
+
+    @staticmethod
+    def _guessimate_to_tds_weight(t, p, w, target_tds_weight: float) -> List[float]:
+        t_begin = t[0]
+        t_end = t[-1]
+        t_span = t_end - t_begin
+
+        # TODO: use resistance curve to estimate puck degradation more precisely
+        def puck_degradation(t: float) -> float:  # degradation = (begin) 1.0 ... 0.6 (end)
+            return -0.4 / t_span * (t - t_begin) + 1.0
+        integral_cummul = [0.0] + list(v for v in integration.cumtrapz(w, t))
+        tds_weight_curve = list()
+        for idx, (w0, w1) in enumerate(zip(integral_cummul[:-1], integral_cummul[1:])):
+            dw = w1 - w0
+            dt = t[idx + 1] - t[idx]
+            ratio = dw / integral_cummul[-1]  # take ratio of tds in the current weight "shard"
+            tds_weight_curve.append(ratio * target_tds_weight / dt * puck_degradation(t[idx]))
+        tds_weight_curve = tds_weight_curve
+        tds_weight_degraded = integration.simpson(tds_weight_curve, t[1:])
+        weight_loss = tds_weight_degraded / target_tds_weight
+        return Analysis._smoothing([0.0] + [w / weight_loss for w in tds_weight_curve])
 
     def _update_flow(self, base_flow: List[float], correction_val: float):
         new_flow = [val * correction_val for val in base_flow]
@@ -134,7 +214,6 @@ class Analysis:
         self._main_fig.canvas.draw_idle()
 
     def _update_window(self, window_val: Tuple[float, float]):
-        # global window_fill
         self._window_fill.remove()
         self._window_fill = self._x_axis.axvspan(*window_val, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
         self._sugg_line.set_ydata(self._calculate_optimal_preped(window_val) * 10)
@@ -143,7 +222,7 @@ class Analysis:
     @staticmethod
     def _calculate_difference(t, f, w, from_t: float) -> List[float]:
         diffs = list()
-        for z in zip(t, f, w):  # time, flow, weight
+        for z in zip(t, Analysis._smoothing(f), Analysis._smoothing(w, 11)):  # time, flow, weight
             if z[0] < from_t or z[1] < 0.1 or z[2] < 0.1:
                 diffs.append(0.0)
             else:  # d = weight / flow
@@ -158,12 +237,13 @@ class Analysis:
         return t[0]  # failed
 
     @staticmethod
-    def _estimate_optimal(t, f, w, d, calc_t_window) -> float:
+    def _estimate_optimal(t, f, w, tds_w, d, calc_range_t) -> float:
         def mse_windowed(flow_correction: float) -> float:
+            calc_begin_t, calc_end_t = calc_range_t
             c = 0
             accum = 0.0
-            for z in filter(lambda _z: calc_t_window[0] <= _z[0] < calc_t_window[1], zip(t, f, w)):
-                accum += (z[1] * flow_correction - z[2]) ** 2
+            for _, flow, weight, tds_weight in filter(lambda _z: calc_begin_t <= _z[0] < calc_end_t, zip(t, f, w, tds_w)):
+                accum += (flow * flow_correction - (weight - tds_weight)) ** 2
                 c += 1
             return accum / c
         diff_median = median(filter(lambda v: v > 0.01, d))
@@ -174,10 +254,14 @@ class Analysis:
             print('WARNING: optimization failed. using diff median.')
             return diff_median
 
+    @staticmethod
+    def _smoothing(l: Iterable, win_len: int = 7, order: int = 3) -> List:
+        return [v for v in savgol_filter(l, win_len, order)]
+
 
 if __name__ == '__main__':
     file_name = filedialog.askopenfilename()
-    with open(file_name) as shot_file:
+    with open(file_name, encoding='utf-8') as shot_file:
         if not shot_file.name.endswith('.shot'):
             print('%s doesn\'t seem like a proper shot file.' % shot_file.name)
             exit(2)
