@@ -1,5 +1,6 @@
 from tkinter import filedialog
 from matplotlib import pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from matplotlib.widgets import Slider
 try:  # try importing RangeSlider from matplotlib package
     from matplotlib.widgets import RangeSlider
@@ -18,6 +19,10 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 
+def eq_within(v1, v2, margin=0.005):
+    return v2 - margin < v1 < v2 + margin
+
+
 class Shot:
     def __init__(self, shot_time: int, espresso_values: Dict[str, Union[List[float], float]]):
         self.shot_time = time.ctime(shot_time)
@@ -30,6 +35,10 @@ class Shot:
             self.tds: float = espresso_values['drink_tds']
         else:
             self.tds = 10.0
+        if 'calibration_flow_multiplier' in espresso_values:
+            self.current_calibration = espresso_values['calibration_flow_multiplier']
+        else:
+            self.current_calibration = 1.0
 
     @staticmethod
     def parse(shot_file: TextIO):
@@ -45,7 +54,8 @@ class Shot:
             ('espresso_flow_weight {', True, True),
             ('espresso_pressure {', True, True),
             ('drink_weight', True, False),
-            ('drink_tds', False, False)
+            ('drink_tds', False, False),
+            ('calibration_flow_multiplier', False, False)
         ]
         data = dict()
         required_fields = len([filter(lambda l: l[1], labels)])
@@ -115,12 +125,18 @@ class Analysis:
         plt.title('Shot at [%s] %.01fg, %.02f%% TDS' % (self.shot.shot_time, self.shot.bw, self.shot.tds))
 
         self._flow_plt, = plt.plot(self.shot.time, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
-        plt.plot(self.shot.time, self.shot.weight, label='weight (g/s)', color='brown', lw=3.5)
+        plt.plot(self.shot.time, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
         plt.plot(self.shot.time, self.shot.pressure, label='pressure (bar)', color='green')
         resistance, = plt.plot(self.shot.time, [0.0] * len(self.shot.time), label='resistance', color='yellow')
         resistance.set_ydata(self._resistance)
         plt.plot(self.shot.time, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
-        plt.plot(self.shot.time, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy')
+        plt.plot(self.shot.time, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy', linestyle='dashed')
+
+        # derived things
+        tds_ratio = [(tw / w * 100) for tw, w in zip(self._tds_effect, self._smoothing(self.shot.weight, 21))]
+        # plt.plot(self.shot.time, tds_ratio, label='TDS ratio (%)')
+        gravimetric_water = [w - tw for w, tw in zip(self.shot.weight, self._tds_effect)]
+        plt.plot(self.shot.time, gravimetric_water, label='measured water (g/s)', color='brown', lw=2)
 
         self._error_line, = plt.plot(self.shot.time, [0.0] * len(self.shot.time), label='error (x10)', color='grey')
         error_data = self._error_series(self.shot.flow, self._stable_weight_t, 10)
@@ -135,6 +151,11 @@ class Analysis:
         correction_ax = plt.axes([0.9, 0.2, 0.03, 0.65])
         correction_slider = Slider(correction_ax, 'correction\nvalue', orientation='vertical',
                                    valinit=1.0, valmin=0.3, valmax=2.5, valstep=0.01)
+        if eq_within(self.shot.current_calibration, 1.0):
+            corr_value_fmt = FuncFormatter(lambda v, p: 'x%.02f' % v)
+        else:
+            corr_value_fmt = FuncFormatter(lambda v, p: 'x%.03f (%.02f)' % (self.shot.current_calibration * v, v))
+        correction_slider._fmt = corr_value_fmt
 
         correction_slider.on_changed(partial(Analysis._update_flow, self, self.shot.flow))
 
@@ -154,7 +175,7 @@ class Analysis:
     def _calculate_resistance(self):
         r = list()
         # using weight, not flow
-        for _w, _p in zip(self._smoothing(self.shot.weight, 15), self._smoothing(self.shot.pressure)):
+        for (_w, _p) in zip(self._smoothing(self.shot.weight, 15), self._smoothing(self.shot.pressure)):
             if _w > 0:
                 r.append(_p ** 0.5 / _w)
             else:
@@ -165,7 +186,7 @@ class Analysis:
         dat = list()
         for z in zip(self.shot.time, self.shot.weight, self._tds_effect, target_flow):
             dat.append(magnifier * abs(z[1] - z[2] - z[3]) if from_t <= z[0] else 0.0)
-        return dat
+        return self._smoothing(dat, 15)
 
     def _make_tds_effect(self, extraction_threshold_weight=0.2):
         estimated_tds_weight = self.shot.bw * self.shot.tds / 100.0
@@ -173,7 +194,7 @@ class Analysis:
         in_extraction = False
         times = list()
         weights = list()
-        for t, p, w in zip(self._smoothing(self.shot.time), self._smoothing(self.shot.weight)):
+        for t, w in zip(*self._smoothing((self.shot.time, self.shot.weight))):
             # collect weight vals after extraction phase starts
             if not in_extraction and extraction_threshold_weight <= w:
                 in_extraction = True
@@ -191,8 +212,8 @@ class Analysis:
         t_span = t_end - t_begin
 
         # TODO: use resistance curve to estimate puck degradation more precisely
-        def puck_degradation(t: float) -> float:  # degradation = (begin) 1.0 ... 0.6 (end)
-            return -0.4 / t_span * (t - t_begin) + 1.0
+        def puck_degradation(t: float) -> float:  # degradation = (begin) 1.0 ... 0.1 (end)
+            return -0.9 / t_span * (t - t_begin) + 1.0
         integral_cummul = [0.0] + list(v for v in integration.cumtrapz(w, t))
         tds_weight_curve = list()
         for idx, (w0, w1) in enumerate(zip(integral_cummul[:-1], integral_cummul[1:])):
@@ -221,7 +242,7 @@ class Analysis:
     @staticmethod
     def _calculate_difference(t, f, w, from_t: float) -> List[float]:
         diffs = list()
-        for z in zip(t, Analysis._smoothing(f), Analysis._smoothing(w, 11)):  # time, flow, weight
+        for z in zip(t, *Analysis._smoothing((f, w))):  # time, flow, weight
             if z[0] < from_t or z[1] < 0.1 or z[2] < 0.1:
                 diffs.append(0.0)
             else:  # d = weight / flow
