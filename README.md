@@ -50,6 +50,7 @@ Pick a shot that meets following requirements:
     also moves as you adjust the correction value
    - So, first, try to move <span style="color:magenta;font-weight:bold">correction line</span>
      closer to the <span style="color:pink;font-weight:bold">suggestion line</span>
-   ![move_correction_line](figure_correction.png)   
+
+    ![move_correction_line](figure_correction.png)   
 
 1. Use the correction value just found as a starting point finding flow calibration value in the DE1 app.
