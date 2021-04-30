@@ -1,4 +1,3 @@
-from tkinter import filedialog
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from matplotlib.widgets import Button
@@ -8,134 +7,23 @@ try:  # try importing RangeSlider from matplotlib package
 except:  # ERROR: old matplotlib. using copied one to support Pydroid
     print('WARNING: matplotlib is old!')
     from mpl341_compat import RangeSlider
-from typing import TextIO, Dict, List, Tuple, Union, Iterable, Any
+from typing import List, Tuple, Iterable
 from scipy import optimize
 from scipy.signal import savgol_filter
 from statistics import median
 from functools import partial
-import sys
-import time
+from tkinter import filedialog, simpledialog
+import tkinter
+import argparse
 import scipy.integrate as integration
 import matplotlib
-import json
 matplotlib.use('TkAgg')
+
+from shot import Shot
 
 
 def eq_within(v1, v2, margin=0.005):
     return v2 - margin < v1 < v2 + margin
-
-
-class Shot:
-    def __init__(self, shot_values: Dict[str, Union[List[Any], Any]]):
-        self.shot_time = time.ctime(shot_values['timestamp'])
-        self.elapsed: List[float] = shot_values['elapsed']
-        self.pressure: List[float] = shot_values['pressure']
-        self.flow: List[float] = shot_values['flow']
-        self.weight: List[float] = shot_values['weight']
-        self.bw: float = shot_values['drink_weight']
-        if 'drink_tds' in shot_values and shot_values['drink_tds'] > 0.1:
-            self.tds: float = shot_values['drink_tds']
-        else:
-            self.tds = 10.0
-        if 'calibration_flow_multiplier' in shot_values:
-            self.current_calibration = shot_values['calibration_flow_multiplier']
-        else:
-            self.current_calibration = 1.0
-
-    @staticmethod
-    def parse(shot_file: TextIO):
-        if shot_file.name.endswith('.shot'):
-            extr = Shot._extract_raw_tcl(shot_file)
-        else:
-            extr = Shot._extract_raw_json(json.load(shot_file))
-
-        # trim vector datasets
-        shortest_vector_len = min(map(lambda v: len(v), filter(lambda i: isinstance(i, list), extr.values())))
-
-        def trim_vector(item):
-            k, v = item
-            if isinstance(v, list):
-                return k, v[:shortest_vector_len]
-            else:
-                return k, v
-        trimmed = dict(map(trim_vector, extr.items()))
-
-        return Shot(trimmed)
-
-    @staticmethod
-    def _extract_raw_tcl(shot_file: TextIO) -> Dict[str, Union[List[Any], Any]]:
-        labels = [  # (label_id_str, required_bool, rename_to_str, cast_to_type)
-            ('clock', True, 'timestamp', int),
-            ('espresso_elapsed {', True, 'elapsed', float),
-            ('espresso_flow {', True, 'flow', float),
-            ('espresso_flow_weight {', True, 'weight', float),
-            ('espresso_pressure {', True, 'pressure', float),
-            ('drink_weight', True, None, float),
-            ('drink_tds', False, None, float),
-            ('calibration_flow_multiplier', False, None, float)
-        ]
-        data = dict()
-        required_fields = len([filter(lambda l: l[1], labels)])
-        required_count = 0
-        for line in shot_file:
-            line = line.strip()
-            for label, required, rename, cast_to in labels:
-                if not line.startswith(label):
-                    continue
-                vector = '{' in label
-                splits = line.replace('{', '').replace('}', '').split()
-                key = splits[0] if rename is None else rename
-                vals = list(map(cast_to, splits[1:]))
-                if required:
-                    required_count += 1
-                if vector:
-                    data[key] = vals
-                else:
-                    data[key] = vals[0]
-            if len(data) == len(labels):
-                break
-
-        if required_count < required_fields:
-            raise RuntimeError('shot file not extracted properly!')
-
-        return data
-
-    @staticmethod
-    def _extract_raw_json(shot_json: Dict[str, Any]) -> Dict[str, Union[List[Any], Any]]:
-        def resolve(o, path):
-            for _id in path.split('.'):
-                o = o[_id]
-            return o
-
-        labels = [  # (label_path_str, required_bool, rename_to_str, cast_to_type)
-            ('timestamp', True, None, int),
-            ('elapsed', True, None, float),
-            ('flow.flow', True, 'flow', float),
-            ('flow.by_weight', True, 'weight', float),
-            ('pressure.pressure', True, 'pressure', float),
-            ('app.data.settings.drink_weight', True, None, float),
-            ('app.data.settings.drink_tds', True, None, float),
-            ('app.data.settings.calibration_flow_multiplier', True, None, float)
-        ]
-
-        data = dict()
-        required_fields = len([filter(lambda l: l[1], labels)])
-        required_count = 0
-        for label, required, rename, cast_to in labels:
-            key = label.split('.')[-1] if rename is None else rename
-            if required:
-                required_count += 1
-            val = resolve(shot_json, label)
-            if isinstance(val, list):
-                val = list(map(cast_to, val))
-            else:
-                val = cast_to(val)
-            data[key] = val
-
-        if required_count < required_fields:
-            raise RuntimeError('shot file not extracted properly!')
-
-        return data
 
 
 class Analysis:
@@ -334,14 +222,35 @@ class Analysis:
 
 
 if __name__ == '__main__':
-    file_name = filedialog.askopenfilename()
+    parser = argparse.ArgumentParser()
+    mutex_g = parser.add_mutually_exclusive_group()
+    mutex_g.add_argument('--visualizer', dest='visualizer_url', action='store', nargs='?', const='?', default=None,
+                        help='take shot history from visualizer.coffee')
+    mutex_g.add_argument('--file', action='store', nargs='?', const='?', default=None,
+                        help='take shot history from a file')
+    args = parser.parse_args()
+
+    if args.visualizer_url:
+        if args.visualizer_url == '?':
+            tkinter.Tk()
+            url = simpledialog.askstring('shot URL', 'Enter URL of the shot: (https://...)\t\t\t\t\t')
+        else:
+            url = args.visualizer_url
+
+        if not url.startswith('http://') and not url.startswith('https://'):
+            raise RuntimeError('invalid shot url!')
+        s = Shot.parse_visualizer(url)
+        Analysis(s).show()
+        exit(0)
+
+    if args.file is None or args.file == '?':
+        file_name = filedialog.askopenfilename()
+    else:
+        file_name = args.file
     with open(file_name, encoding='utf-8') as shot_file:
         ext = shot_file.name.split('.')[-1]
         if ext not in ['shot', 'json']:
             print('%s doesn\'t seem like a proper shot file.' % shot_file.name)
             exit(2)
         s = Shot.parse(shot_file)
-    if len(sys.argv) > 1:  # optionally first argument being a weight threshold
-        Analysis(s, float(sys.argv[1])).show()
-    else:
         Analysis(s).show()
