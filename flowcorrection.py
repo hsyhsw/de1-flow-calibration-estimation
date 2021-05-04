@@ -2,22 +2,15 @@ from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from matplotlib.widgets import Button
 from matplotlib.widgets import Slider
-try:  # try importing RangeSlider from matplotlib package
-    from matplotlib.widgets import RangeSlider
-except:  # ERROR: old matplotlib. using copied one to support Pydroid
-    print('WARNING: matplotlib is old!')
-    from mpl341_compat import RangeSlider
+from matplotlib.widgets import RangeSlider
 from typing import List, Tuple, Iterable
 from scipy import optimize
 from scipy.signal import savgol_filter
 from statistics import median
 from functools import partial
-from tkinter import filedialog, simpledialog
-import tkinter
 import argparse
 import scipy.integrate as integration
 import matplotlib
-matplotlib.use('TkAgg')
 
 from shot import Shot
 
@@ -50,7 +43,7 @@ class Analysis:
         self._sugg_line = None
         self._corr_line = None
 
-    def show(self):
+    def show(self, with_controls: bool = True):
         # graph things...
         self._main_fig, self._x_axis = plt.subplots()
         self._x_axis.set_xlabel('seconds')
@@ -79,37 +72,38 @@ class Analysis:
         self._sugg_line = plt.axhline(self._corr_suggestion * 10, label='suggestion (x10)', color='pink', linestyle='dashed')
         self._corr_line = plt.axhline(10.0, label='correction (x10)', color='magenta', linestyle='dotted')
 
-        # sliders
-        plt.subplots_adjust(right=0.85, bottom=0.18)
-        # correction slider
-        correction_ax = plt.axes([0.87, 0.18, 0.03, 0.65])
-        correction_slider = Slider(correction_ax, 'correction\nvalue', orientation='vertical',
-                                   valinit=1.0, valmin=0.3, valmax=2.5, valstep=0.01)
-        if eq_within(self.shot.current_calibration, 1.0):
-            corr_value_fmt = FuncFormatter(lambda v, p: 'x%.02f' % v)
-        else:
-            corr_value_fmt = FuncFormatter(lambda v, p: 'x%.03f\n(%.02f)' % (self.shot.current_calibration * v, v))
-        correction_slider._fmt = corr_value_fmt
-
-        correction_slider.on_changed(partial(Analysis._update_flow, self, self.shot.flow))
-
-        # +- buttons
-        plus_button_x = plt.axes([0.92, 0.27, 0.035, 0.06])
-        minus_button_x = plt.axes([0.92, 0.2, 0.035, 0.06])
-        plus_button = Button(plus_button_x, '▲')
-        minus_button = Button(minus_button_x, '▼')
-        plus_button.on_clicked(lambda _: correction_slider.set_val(correction_slider.val + 0.01))
-        minus_button.on_clicked(lambda _: correction_slider.set_val(correction_slider.val - 0.01))
-
-        # window slider
-        window_ax = plt.axes([0.16, 0.05, 0.66, 0.03])
-        window_slider = RangeSlider(window_ax, 'opt.\nwindow', valmin=0.0, valmax=time_series[-1], valstep=0.1)
-        window_slider.set_val(self._initial_window)
-        window_slider.valtext.set_visible(False)
-
-        # to be redrawn on slider move... I know it's dirty!!
         self._window_fill = self._x_axis.axvspan(*self._initial_window, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
-        window_slider.on_changed(partial(Analysis._update_window, self))
+
+        if with_controls:
+            # sliders
+            plt.subplots_adjust(right=0.85, bottom=0.18)
+            # correction slider
+            correction_ax = plt.axes([0.87, 0.18, 0.03, 0.65])
+            correction_slider = Slider(correction_ax, 'correction\nvalue', orientation='vertical',
+                                       valinit=1.0, valmin=0.3, valmax=2.5, valstep=0.01)
+            if eq_within(self.shot.current_calibration, 1.0):
+                corr_value_fmt = FuncFormatter(lambda v, p: 'x%.02f' % v)
+            else:
+                corr_value_fmt = FuncFormatter(lambda v, p: 'x%.03f\n(%.02f)' % (self.shot.current_calibration * v, v))
+            correction_slider._fmt = corr_value_fmt
+
+            correction_slider.on_changed(partial(Analysis._update_flow, self, self.shot.flow))
+
+            # +- buttons
+            plus_button_x = plt.axes([0.92, 0.27, 0.035, 0.06])
+            minus_button_x = plt.axes([0.92, 0.2, 0.035, 0.06])
+            plus_button = Button(plus_button_x, '▲')
+            minus_button = Button(minus_button_x, '▼')
+            plus_button.on_clicked(lambda _: correction_slider.set_val(correction_slider.val + 0.01))
+            minus_button.on_clicked(lambda _: correction_slider.set_val(correction_slider.val - 0.01))
+
+            # window slider
+            window_ax = plt.axes([0.16, 0.05, 0.66, 0.03])
+            window_slider = RangeSlider(window_ax, 'opt.\nwindow', valmin=0.0, valmax=time_series[-1], valstep=0.1)
+            window_slider.set_val(self._initial_window)
+            window_slider.valtext.set_visible(False)
+
+            window_slider.on_changed(partial(Analysis._update_window, self))
 
         self._x_axis.legend()
         plt.show()
@@ -222,6 +216,10 @@ class Analysis:
 
 
 if __name__ == '__main__':
+    from tkinter import filedialog, simpledialog
+    import tkinter
+    matplotlib.use('TkAgg')
+
     parser = argparse.ArgumentParser()
     mutex_g = parser.add_mutually_exclusive_group()
     mutex_g.add_argument('--visualizer', dest='visualizer_url', action='store', nargs='?', const='?', default=None,
