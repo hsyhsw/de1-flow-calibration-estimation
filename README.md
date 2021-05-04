@@ -1,5 +1,11 @@
 # de1-flow-calibration-estimation
 
+## Online app available at https://de1-flow-estimator.herokuapp.com/
+
+Caution! extreamely slow!
+
+---
+
 Use python 3.8+ with following packages:
 - matplotlib
 - scipy
