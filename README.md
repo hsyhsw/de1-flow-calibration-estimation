@@ -1,6 +1,10 @@
 # de1-flow-calibration-estimation
 
-## Online app available at https://de1-flow-estimator.herokuapp.com/
+## Try online version at https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?filepath=flowcorrection_nb.ipynb
+
+1. Click on the "Run" button on the top after it is fully loaded. (it may take a minute or so.)
+1. Scroll down to the bottom, you'll see the program running.
+1. Upload .shot file or take a URL from the visualizer.
 
 Caution! extreamely slow!
 
