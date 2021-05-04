@@ -136,7 +136,7 @@ class Shot:
     @staticmethod
     def _extract_visualizer_html(raw_html) -> Dict[str, Union[List[Any], Any]]:
         data = dict()
-
+        raw_html = raw_html.replace('<br>', '\n')
         parsed_page = et.XML(raw_html)
 
         # shot metadata (pattern matching)
