@@ -43,7 +43,7 @@ class Analysis:
         self._sugg_line = None
         self._corr_line = None
 
-    def show(self, with_controls: bool = True):
+    def show(self, with_controls: bool = True, verbose: bool = False):
         # graph things...
         self._main_fig, self._x_axis = plt.subplots()
         self._x_axis.set_xlabel('seconds')
@@ -52,12 +52,13 @@ class Analysis:
         time_series = self.shot.elapsed
 
         self._flow_plt, = plt.plot(time_series, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
-        plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
+        if verbose:
+            plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
+            resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
+            resistance.set_ydata(self._resistance)
+            plt.plot(time_series, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
+            plt.plot(time_series, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy', linestyle='dashed')
         plt.plot(time_series, self.shot.pressure, label='pressure (bar)', color='green')
-        resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
-        resistance.set_ydata(self._resistance)
-        plt.plot(time_series, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
-        plt.plot(time_series, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy', linestyle='dashed')
 
         # derived things
         tds_ratio = [(tw / w * 100) for tw, w in zip(self._tds_effect, self._smoothing(self.shot.weight, 21))]
@@ -223,6 +224,8 @@ if __name__ == '__main__':
     matplotlib.use('TkAgg')
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--verbose', '-v', dest='verbose', action='store_true', default=False,
+                        help='make the plotting more verbose!')
     mutex_g = parser.add_mutually_exclusive_group()
     mutex_g.add_argument('--visualizer', dest='visualizer_url', action='store', nargs='?', const='?', default=None,
                         help='take shot history from visualizer.coffee')
@@ -240,7 +243,7 @@ if __name__ == '__main__':
         if not url.startswith('http://') and not url.startswith('https://'):
             raise RuntimeError('invalid shot url!')
         s = Shot.parse_visualizer(url)
-        Analysis(s).show()
+        Analysis(s).show(True, args.verbose)
         exit(0)
 
     if args.file is None or args.file == '?':
@@ -253,4 +256,4 @@ if __name__ == '__main__':
             print('%s doesn\'t seem like a proper shot file.' % shot_file.name)
             exit(2)
         s = Shot.parse(shot_file)
-        Analysis(s).show()
+        Analysis(s, args.verbose).show(True, args.verbose)
