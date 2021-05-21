@@ -125,7 +125,6 @@ class Analysis:
         return self._smoothing(dat, 15)
 
     def _make_tds_effect(self, extraction_threshold_weight=0.2):
-        estimated_tds_weight = self.shot.bw * self.shot.tds / 100.0
         tds_series = list()
         in_extraction = False
         times = list()
@@ -139,10 +138,10 @@ class Analysis:
             else:
                 times.append(t)
                 weights.append(w)
-        return tds_series + self._guessimate_to_tds_weight(times, weights, estimated_tds_weight)
+        return tds_series + self._guessimate_to_tds_weight(times, weights)
 
-    @staticmethod
-    def _guessimate_to_tds_weight(t, w, target_tds_weight: float) -> List[float]:
+    def _guessimate_to_tds_weight(self, t, w) -> List[float]:
+        target_tds_weight = self.shot.bw * self.shot.tds / 100.0
         t_begin = t[0]
         t_end = t[-1]
         t_span = t_end - t_begin
@@ -150,12 +149,15 @@ class Analysis:
         # TODO: use resistance curve to estimate puck degradation more precisely
         def puck_degradation(t: float) -> float:  # degradation = (begin) 1.0 ... 0.1 (end)
             return -0.9 / t_span * (t - t_begin) + 1.0
-        integral_cummul = [0.0] + list(v for v in integration.cumtrapz(w, t))
+        integral_cumul = [0.0] + list(v for v in integration.cumtrapz(w, t))
+        if not eq_within(self.shot.bw, integral_cumul[-1], self.shot.bw * 0.2):
+            raise RuntimeError('Too much error between beverage weight: %.02fg, cumulated weight: %.02fg' % (self.shot.bw, integral_cumul[-1]))
+
         tds_weight_curve = list()
-        for idx, (w0, w1) in enumerate(zip(integral_cummul[:-1], integral_cummul[1:])):
+        for idx, (w0, w1) in enumerate(zip(integral_cumul[:-1], integral_cumul[1:])):
             dw = w1 - w0
             dt = t[idx + 1] - t[idx]
-            ratio = dw / integral_cummul[-1]  # take ratio of tds in the current weight "shard"
+            ratio = dw / integral_cumul[-1]  # take ratio of tds in the current weight "shard"
             tds_weight_curve.append(ratio * target_tds_weight / dt * puck_degradation(t[idx]))
         tds_weight_curve = tds_weight_curve
         tds_weight_degraded = integration.simpson(tds_weight_curve, t[1:])
