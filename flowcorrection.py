@@ -154,22 +154,33 @@ class Analysis:
 
     @staticmethod
     def _from_raw_scale_weight(raw_weight: List[float], time_elapsed_target: List[float], approximate_to: List[float]) -> List[float]:
-        # trim weight data (data from heater test / flush stage, maybe...)
-        def mse_trim_shot(args: List):  # begin index, -end index, scale factor
+        """
+        trimming: infer extraction phase, which best fits to the scaled erroneous gravimetric flow
+        **: supposedly, heater test phase / flush phase
+        --: extraction phase (including PI stages)
+        ***---------------------------------------******** => raw, cumulative weight values
+           <trim_begin ---------------- -trim_end>         => inferred extraction phase
+           [-------------------------------------]         => scaled baseline (erroneous gravimetric flow)
+        """
+        def sqerr_trimmed_scaled_weight(args: List):  # trim_samples_begin, -trim_samples_end, scale_factor
             trim_begin = round(args[0])
             trim_end = round(-args[1])
             scale = args[2]
-            scaled_cumulative = [scale * v for v in integration.cumtrapz(approximate_to, time_elapsed_target)]
             trimmed = raw_weight[trim_begin:trim_end]
-            resampled = resample(trimmed, len(time_elapsed_target), window=40.0)
-            # MSE between trimmed, downsampled cumulative weight <> scaled cumulative weight
-            return sum((v0 - v1) ** 2 for (v0, v1) in zip(resampled, scaled_cumulative))
-        trim_opt = optimize.minimize(mse_trim_shot, [100, 35, 0.5], method='Nelder-Mead')
+            # downsample high freq weight samples to number of time samples
+            downsampled = resample(trimmed, len(time_elapsed_target), window=40.0)
+            scaled_cumulative = integration.cumtrapz([scale * v for v in approximate_to], time_elapsed_target)
+            return sum((v0 - v1) ** 2 for (v0, v1) in zip(downsampled, scaled_cumulative))
+
+        # minimize squared error between trimmed, downsampled cumulative weight <> scaled cumulative weight
+        # adjusting trimming range(begin, end), and weight correction factor
+        trim_opt = optimize.minimize(sqerr_trimmed_scaled_weight, [100, 35, 0.5], method='Nelder-Mead')
         if trim_opt.status == 0:
             print('Raw gravimetric flow estimation: ' + str(trim_opt.x))
         else:
             raise RuntimeError('Optimization for gravimetric flow estimation failed!')
         weight_trimmed = raw_weight[round(trim_opt.x[0]):round(-trim_opt.x[1])]
+        # downsample inferred extraction phase then remove some FFT artifacts
         downsampled = list(map(lambda v: 0 if v < 0.05 else v, resample(weight_trimmed, len(time_elapsed_target), window=42.0)))
 
         derivative = list()
