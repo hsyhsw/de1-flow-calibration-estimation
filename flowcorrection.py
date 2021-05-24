@@ -6,6 +6,7 @@ from matplotlib.widgets import RangeSlider
 from typing import List, Tuple, Iterable
 from scipy import optimize
 from scipy.signal import savgol_filter
+from scipy.signal import resample
 from statistics import median
 from functools import partial
 import argparse
@@ -23,10 +24,18 @@ class Analysis:
     def __init__(self, s: Shot, weight_threshold: float = 0.5):
         self.shot = s
 
+        try:  # using 'logged' gravimetric flow (same as before)
+            self._tds_effect = self._make_tds_effect(False)
+        except RuntimeError as e:
+            print('WARNING: trying with raw cumulative weight')
+            if hasattr(self.shot, 'weight_accum_raw'):  # using 'derived' gravimetric flow
+                self._tds_effect = self._make_tds_effect(True)
+            else:
+                raise e
+
         smoothed_weight = self._smoothing(s.weight)
         self._stable_weight_t = self._stable_weight_time_begin(s.elapsed, smoothed_weight, weight_threshold)
         self._initial_window = (self._stable_weight_t + 0.5, s.elapsed[-1] - 0.5)
-        self._tds_effect = self._make_tds_effect()
         self._resistance = self._calculate_resistance()
 
         self._diffs = self._calculate_difference(s.elapsed, s.flow, s.weight, self._stable_weight_t)
@@ -125,11 +134,13 @@ class Analysis:
             dat.append(magnifier * abs(z[1] - z[2] - z[3]) if from_t <= z[0] else 0.0)
         return self._smoothing(dat, 15)
 
-    def _make_tds_effect(self, extraction_threshold_weight=0.2):
+    def _make_tds_effect(self, cindy_rescue: bool, extraction_threshold_weight=0.2):
         tds_series = list()
         in_extraction = False
         times = list()
         weights = list()
+        if cindy_rescue:
+            self.shot.weight = self._from_raw_scale_weight(self.shot.weight_accum_raw, self.shot.elapsed, self.shot.weight)
         for t, w in zip(*self._smoothing((self.shot.elapsed, self.shot.weight))):
             # collect weight vals after extraction phase starts
             if not in_extraction and extraction_threshold_weight <= w:
@@ -140,6 +151,34 @@ class Analysis:
                 times.append(t)
                 weights.append(w)
         return tds_series + self._guessimate_to_tds_weight(times, weights)
+
+    @staticmethod
+    def _from_raw_scale_weight(raw_weight: List[float], time_elapsed_target: List[float], approximate_to: List[float]) -> List[float]:
+        # trim weight data (data from heater test / flush stage, maybe...)
+        def mse_trim_shot(args: List):  # begin index, -end index, scale factor
+            trim_begin = round(args[0])
+            trim_end = round(-args[1])
+            scale = args[2]
+            scaled_cumulative = [scale * v for v in integration.cumtrapz(approximate_to, time_elapsed_target)]
+            trimmed = raw_weight[trim_begin:trim_end]
+            resampled = resample(trimmed, len(time_elapsed_target), window=40.0)
+            # MSE between trimmed, downsampled cumulative weight <> scaled cumulative weight
+            return sum((v0 - v1) ** 2 for (v0, v1) in zip(resampled, scaled_cumulative))
+        trim_opt = optimize.minimize(mse_trim_shot, [100, 35, 0.5], method='Nelder-Mead')
+        if trim_opt.status == 0:
+            print('Raw gravimetric flow estimation: ' + str(trim_opt.x))
+        else:
+            raise RuntimeError('Optimization for gravimetric flow estimation failed!')
+        weight_trimmed = raw_weight[round(trim_opt.x[0]):round(-trim_opt.x[1])]
+        downsampled = list(map(lambda v: 0 if v < 0.05 else v, resample(weight_trimmed, len(time_elapsed_target), window=42.0)))
+
+        derivative = list()
+        dt = time_elapsed_target[-1] / len(time_elapsed_target)
+        for w0, w1 in zip(downsampled[:-1], downsampled[1:]):
+            dw = max(0, w1 - w0)
+            derivative.append(dw / dt)
+        print('WARNING: shot now weighs %.02fg' % integration.trapz(derivative, dx=dt))
+        return [0.0] + derivative
 
     def _guessimate_to_tds_weight(self, t, w) -> List[float]:
         target_tds_weight = self.shot.bw * self.shot.tds / 100.0

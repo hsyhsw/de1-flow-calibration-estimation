@@ -10,6 +10,8 @@ import requests.status_codes
 
 
 class Shot:
+    DO_NOT_TRIM_KEY = 'DO_NOT_TRIM'
+
     def __init__(self, shot_values: Dict[str, Union[List[Any], Any]]):
         if isinstance(shot_values['timestamp'], str):
             self.shot_time = shot_values['timestamp']
@@ -19,6 +21,8 @@ class Shot:
         self.pressure: List[float] = shot_values['pressure']
         self.flow: List[float] = shot_values['flow']
         self.weight: List[float] = shot_values['weight']
+        if 'weight_accum_raw' in shot_values:
+            self.weight_accum_raw: List[float] = shot_values['weight_accum_raw']
         self.bw: float = shot_values['drink_weight']
         if 'drink_tds' in shot_values and shot_values['drink_tds'] > 0.1:
             self.tds: float = shot_values['drink_tds']
@@ -43,6 +47,8 @@ class Shot:
             k, v = item
             if isinstance(v, list):
                 return k, v[:shortest_vector_len]
+            elif isinstance(v, dict):
+                return k, v[Shot.DO_NOT_TRIM_KEY]
             else:
                 return k, v
         trimmed = dict(map(trim_vector, extr.items()))
@@ -60,22 +66,23 @@ class Shot:
 
     @staticmethod
     def _extract_raw_tcl(shot_file: TextIO) -> Dict[str, Union[List[Any], Any]]:
-        labels = [  # (label_id_str, required_bool, rename_to_str, cast_to_type)
-            ('clock', True, 'timestamp', int),
-            ('espresso_elapsed {', True, 'elapsed', float),
-            ('espresso_flow {', True, 'flow', float),
-            ('espresso_flow_weight {', True, 'weight', float),
-            ('espresso_pressure {', True, 'pressure', float),
-            ('drink_weight', True, None, float),
-            ('drink_tds', False, None, float),
-            ('calibration_flow_multiplier', False, None, float)
+        labels = [  # (label_id_str, required_bool, rename_to_str, cast_to_type, do_not_trim)
+            ('clock', True, 'timestamp', int, False),
+            ('espresso_elapsed {', True, 'elapsed', float, False),
+            ('espresso_flow {', True, 'flow', float, False),
+            ('espresso_flow_weight {', True, 'weight', float, False),
+            ('scale_raw_weight {', False, 'weight_accum_raw', float, True),
+            ('espresso_pressure {', True, 'pressure', float, False),
+            ('drink_weight', True, None, float, False),
+            ('drink_tds', False, None, float, False),
+            ('calibration_flow_multiplier', False, None, float, False)
         ]
         data = dict()
         required_fields = len([filter(lambda l: l[1], labels)])
         required_count = 0
         for line in shot_file:
             line = line.strip()
-            for label, required, rename, cast_to in labels:
+            for label, required, rename, cast_to, no_trim in labels:
                 if not line.startswith(label):
                     continue
                 vector = '{' in label
@@ -88,6 +95,9 @@ class Shot:
                     data[key] = vals
                 else:
                     data[key] = vals[0]
+                if no_trim:
+                    current = data.get(key)
+                    data[key] = {Shot.DO_NOT_TRIM_KEY: current}
             if len(data) == len(labels):
                 break
 
