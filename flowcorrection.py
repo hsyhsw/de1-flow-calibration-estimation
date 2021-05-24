@@ -21,7 +21,7 @@ def eq_within(v1, v2, margin=0.005):
 
 
 class Analysis:
-    def __init__(self, s: Shot, weight_threshold: float = 0.5):
+    def __init__(self, s: Shot, weight_threshold: float = 0.8):
         self.shot = s
 
         try:  # using 'logged' gravimetric flow (same as before)
@@ -35,7 +35,7 @@ class Analysis:
 
         smoothed_weight = self._smoothing(s.weight)
         self._stable_weight_t = self._stable_weight_time_begin(s.elapsed, smoothed_weight, weight_threshold)
-        self._initial_window = (self._stable_weight_t + 0.5, s.elapsed[-1] - 0.5)
+        self._initial_window = (self._stable_weight_t + 0.5, s.elapsed[-1] - 1.5)
         self._resistance = self._calculate_resistance()
 
         self._diffs = self._calculate_difference(s.elapsed, s.flow, s.weight, self._stable_weight_t)
