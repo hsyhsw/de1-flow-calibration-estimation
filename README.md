@@ -21,8 +21,9 @@ Use python 3.8+ with following packages:
 - requests
 
 ``` 
-(venv) de1-flow-calibration-estimation> python -m flowcorrection [-h] [--visualizer [VISUALIZER_URL] | --file [FILE]]
+(venv) de1-flow-calibration-estimation> python -m flowcorrection [-h] [--verbose] [--visualizer [VISUALIZER_URL] | --file [FILE]]
 ```
+- `--verbose, -v`: show verbose graph with a lot of messy stuffs! (if you're nerdy enough)
 - `--visualizer [URL]`: specify shot URL on the visualizer site (or will be asked) 
 - `--file [PATH]`: specify a shot file (or will be asked)
 - or without any option: you'll be asked to pick a shot file
