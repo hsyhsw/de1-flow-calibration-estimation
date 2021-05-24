@@ -29,6 +29,7 @@ class Analysis:
         except RuntimeError as e:
             print('WARNING: trying with raw cumulative weight')
             if hasattr(self.shot, 'weight_accum_raw'):  # using 'derived' gravimetric flow
+                self._erroneous_weight = self.shot.weight  # backup old weight values
                 self._tds_effect = self._make_tds_effect(True)
             else:
                 raise e
@@ -62,6 +63,8 @@ class Analysis:
 
         self._flow_plt, = plt.plot(time_series, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
         if verbose:
+            if hasattr(self, '_erroneous_weight'):
+                plt.plot(time_series, self._erroneous_weight, label='error weight (g/s)', color='brown', linestyle='dashed')
             plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
             resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
             resistance.set_ydata(self._resistance)
@@ -202,7 +205,7 @@ class Analysis:
             return -0.9 / t_span * (t - t_begin) + 1.0
         integral_cumul = [0.0] + list(v for v in integration.cumtrapz(w, t))
         if not eq_within(self.shot.bw, integral_cumul[-1], self.shot.bw * 0.2):
-            raise RuntimeError('Too much error between beverage weight: %.02fg, cumulated weight: %.02fg' % (self.shot.bw, integral_cumul[-1]))
+            raise RuntimeError('Too much error between beverage weight: %.02fg, cumulative weight: %.02fg' % (self.shot.bw, integral_cumul[-1]))
 
         tds_weight_curve = list()
         for idx, (w0, w1) in enumerate(zip(integral_cumul[:-1], integral_cumul[1:])):
