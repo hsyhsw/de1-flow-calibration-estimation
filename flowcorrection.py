@@ -63,8 +63,6 @@ class Analysis:
 
         self._flow_plt, = plt.plot(time_series, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
         if verbose:
-            if hasattr(self, '_erroneous_weight'):
-                plt.plot(time_series, self._erroneous_weight, label='error weight (g/s)', color='brown', linestyle='dashed')
             plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
             resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
             resistance.set_ydata(self._resistance)
@@ -73,7 +71,9 @@ class Analysis:
         plt.plot(time_series, self.shot.pressure, label='pressure (bar)', color='green')
 
         # derived things
-        tds_ratio = [(tw / w * 100) for tw, w in zip(self._tds_effect, self._smoothing(self.shot.weight, 21))]
+        if hasattr(self, '_erroneous_weight'):  # only shown when weight curve is derived from raw scale values
+            plt.plot(time_series, self._erroneous_weight, label='error weight (g/s)', color='brown', alpha=0.6, linestyle='dashed')
+        # tds_ratio = [(tw / w * 100) for tw, w in zip(self._tds_effect, self._smoothing(self.shot.weight, 21))]
         # plt.plot(time_series, tds_ratio, label='TDS ratio (%)')
         gravimetric_water = [w - tw for w, tw in zip(self.shot.weight, self._tds_effect)]
         plt.plot(time_series, gravimetric_water, label='measured water (g/s)', color='brown', lw=2)
@@ -143,7 +143,12 @@ class Analysis:
         times = list()
         weights = list()
         if cindy_rescue:
-            self.shot.weight = self._from_raw_scale_weight(self.shot.weight_accum_raw, self.shot.elapsed, self.shot.weight)
+            scale_factor, scaled = self._try_scaling_to_beverage_weight(self.shot.elapsed, self.shot.weight, self.shot.bw)
+            self.shot.weight = scaled
+            print('scaling with x%.02f, now shot weighs %.02fg' % (scale_factor, integration.trapz(scaled, self.shot.elapsed)))
+            if 0:  # old approximation method
+                accum_restored = self._from_raw_scale_weight(self.shot.weight_accum_raw, self.shot.elapsed, self.shot.weight, scale_factor)
+                self.shot.weight = accum_restored
         for t, w in zip(*self._smoothing((self.shot.elapsed, self.shot.weight))):
             # collect weight vals after extraction phase starts
             if not in_extraction and extraction_threshold_weight <= w:
@@ -156,7 +161,12 @@ class Analysis:
         return tds_series + self._guessimate_to_tds_weight(times, weights)
 
     @staticmethod
-    def _from_raw_scale_weight(raw_weight: List[float], time_elapsed_target: List[float], approximate_to: List[float]) -> List[float]:
+    def _try_scaling_to_beverage_weight(elapsed_time: List[float], gravimetric_flow: List[float], beverage_weight: float):
+        scale_factor = beverage_weight / integration.trapz(gravimetric_flow, elapsed_time)
+        return scale_factor, [scale_factor * v for v in gravimetric_flow]
+
+    @staticmethod
+    def _from_raw_scale_weight(raw_weight: List[float], time_elapsed_target: List[float], approximate_to: List[float], scale_hint: float) -> List[float]:
         """
         trimming: infer extraction phase, which best fits to the scaled erroneous gravimetric flow
         **: supposedly, heater test phase / flush phase
@@ -165,6 +175,8 @@ class Analysis:
            <trim_begin ---------------- -trim_end>         => inferred extraction phase
            [-------------------------------------]         => scaled baseline (erroneous gravimetric flow)
         """
+        COMPARE_CUMULATIVE_WEIGHT = False
+
         def sqerr_trimmed_scaled_weight(args: List):  # trim_samples_begin, -trim_samples_end, scale_factor
             trim_begin = round(args[0])
             trim_end = round(-args[1])
@@ -174,17 +186,27 @@ class Analysis:
             downsampled = resample(trimmed, len(time_elapsed_target), window=40.0)
             scaled_cumulative = integration.cumtrapz([scale * v for v in approximate_to], time_elapsed_target)
             return sum((v0 - v1) ** 2 for (v0, v1) in zip(downsampled, scaled_cumulative))
-
         # minimize squared error between trimmed, downsampled cumulative weight <> scaled cumulative weight
         # adjusting trimming range(begin, end), and weight correction factor
-        trim_opt = optimize.minimize(sqerr_trimmed_scaled_weight, [100, 35, 0.5], method='Nelder-Mead')
+        trim_opt = optimize.minimize(sqerr_trimmed_scaled_weight, [100, 35, scale_hint], method='Nelder-Mead')
         if trim_opt.status == 0:
-            print('Raw gravimetric flow estimation: ' + str(trim_opt.x))
+            print('Raw gravimetric flow estimation: Trim[%.02f, -%.02f], x%.02f' % (trim_opt.x[0], trim_opt.x[1], trim_opt.x[2]))
         else:
             raise RuntimeError('Optimization for gravimetric flow estimation failed!')
+        if COMPARE_CUMULATIVE_WEIGHT:
+            scaled = [trim_opt.x[2] * v for v in approximate_to]
+            plt.plot(time_elapsed_target, [0.0] + [v for v in integration.cumtrapz(scaled, time_elapsed_target)], label='weight scaled (g/s)')
+
         weight_trimmed = raw_weight[round(trim_opt.x[0]):round(-trim_opt.x[1])]
         # downsample inferred extraction phase then remove some FFT artifacts
         downsampled = list(map(lambda v: 0 if v < 0.05 else v, resample(weight_trimmed, len(time_elapsed_target), window=42.0)))
+
+        if COMPARE_CUMULATIVE_WEIGHT:
+            _t = list()
+            for i in range(len(time_elapsed_target)):
+                _t.append(time_elapsed_target[-1] / len(time_elapsed_target) * i)
+            plt.plot(_t, downsampled, label='derived weight (g/s)')
+            plt.legend()
 
         derivative = list()
         dt = time_elapsed_target[-1] / len(time_elapsed_target)
