@@ -17,7 +17,6 @@ Use python 3.8+ with following packages:
 - matplotlib
 - scipy
 - numpy
-- esprima
 - requests
 
 ``` 
