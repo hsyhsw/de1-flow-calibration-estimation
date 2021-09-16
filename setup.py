@@ -7,8 +7,7 @@ setup(
     install_requires=[
         'matplotlib',
         'scipy',
-        'numpy',
-        'esprima',
+        'numpy'
         'requests'
     ],
     url='',

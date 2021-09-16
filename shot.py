@@ -1,8 +1,4 @@
-from typing import Dict, Union, List, Any, TextIO
-from xml.etree import ElementTree as et
-from esprima.nodes import ExpressionStatement, AssignmentExpression
-import esprima as js_parser
-import re
+from typing import Dict, Union, List, Any, TextIO, Tuple
 import json
 import time
 import requests
@@ -10,7 +6,7 @@ import requests.status_codes
 
 
 class Shot:
-    DO_NOT_TRIM_KEY = 'DO_NOT_TRIM'
+    DO_NOT_TRIM_KEY = 'DO_NOT_TRIM'  # XXX: tcl hack
 
     def __init__(self, shot_values: Dict[str, Union[List[Any], Any]]):
         if isinstance(shot_values['timestamp'], str):
@@ -34,35 +30,67 @@ class Shot:
             self.current_calibration = 1.0
 
     @staticmethod
+    def _trim_vectors(extr: dict):
+        """
+        Trim vectors to match length of the shortest one.
+        """
+        shortest_len = min(map(lambda v: len(v), filter(lambda i: isinstance(i, list), extr.values())))
+
+        def impl(item):
+            k, v = item
+            if isinstance(v, list):
+                return k, v[:shortest_len]
+            elif isinstance(v, dict):  # XXX: tcl hack
+                return k, v[Shot.DO_NOT_TRIM_KEY]
+            else:
+                return k, v
+
+        return dict(map(impl, extr.items()))
+
+    @staticmethod
     def parse(shot_file: TextIO):
         if shot_file.name.endswith('.shot'):
             extr = Shot._extract_raw_tcl(shot_file)
         else:
-            extr = Shot._extract_raw_json(json.load(shot_file))
+            config = [  # (label_path_str, required_bool, rename_to_str, cast_to_type)
+                ('timestamp', True, None, int),
+                ('elapsed', True, None, float),
+                ('flow.flow', True, 'flow', float),
+                ('flow.by_weight', True, 'weight', float),
+                ('pressure.pressure', True, 'pressure', float),
+                ('app.data.settings.drink_weight', True, None, float),
+                ('app.data.settings.drink_tds', True, None, float),
+                ('app.data.settings.calibration_flow_multiplier', True, None, float)
+            ]
+            extr = Shot._extract_raw_json(json.load(shot_file), config)
 
-        # trim vector datasets
-        shortest_vector_len = min(map(lambda v: len(v), filter(lambda i: isinstance(i, list), extr.values())))
-
-        def trim_vector(item):
-            k, v = item
-            if isinstance(v, list):
-                return k, v[:shortest_vector_len]
-            elif isinstance(v, dict):
-                return k, v[Shot.DO_NOT_TRIM_KEY]
-            else:
-                return k, v
-        trimmed = dict(map(trim_vector, extr.items()))
-
-        return Shot(trimmed)
+        return Shot(Shot._trim_vectors(extr))
 
     @staticmethod
     def parse_visualizer(url: str):
-        resp = requests.get(url)
+        def _to_api_url(page_url: str) -> str:
+            """
+            https://visualizer.coffee/shots/{id} --> https://visualizer.coffee/api/shots/{id}/download
+            """
+            page_url = page_url.replace('/shots', '/api/shots')
+            return page_url + '/download'
+
+        resp = requests.get(_to_api_url(url))
         if not resp.ok:
             raise RuntimeError('failed to fetch shot at %s' % url)
-        extr = Shot._extract_visualizer_html(resp.text)
-        extr['timestamp'] = next(filter(lambda p: len(p) != 0, reversed(url.split('/'))))
-        return Shot(extr)
+
+        config = [  # (label_path_str, required_bool, rename_to_str, cast_to_type)
+            ('start_time', True, 'timestamp', str),
+            ('timeframe', True, 'elapsed', float),
+            ('data.espresso_flow', True, 'flow', float),
+            ('data.espresso_flow_weight', True, 'weight', float),
+            ('data.espresso_pressure', True, 'pressure', float),
+            ('drink_weight', True, None, float),
+            ('drink_tds', False, None, float),
+        ]
+        extr = Shot._extract_raw_json(json.loads(resp.text), config)
+
+        return Shot(Shot._trim_vectors(extr))
 
     @staticmethod
     def _extract_raw_tcl(shot_file: TextIO) -> Dict[str, Union[List[Any], Any]]:
@@ -107,31 +135,24 @@ class Shot:
         return data
 
     @staticmethod
-    def _extract_raw_json(shot_json: Dict[str, Any]) -> Dict[str, Union[List[Any], Any]]:
-        def resolve(o, path):
+    def _extract_raw_json(shot_json: Dict[str, Any], extr_config: List[Tuple]) -> Dict[str, Union[List[Any], Any]]:
+        """
+        shot_json: dict-accessible JSON object
+        extr_config: [(label_path_str, required_bool, rename_to_str, cast_to_type)]
+        """
+        def _resolve(o, path):
             for _id in path.split('.'):
                 o = o[_id]
             return o
 
-        labels = [  # (label_path_str, required_bool, rename_to_str, cast_to_type)
-            ('timestamp', True, None, int),
-            ('elapsed', True, None, float),
-            ('flow.flow', True, 'flow', float),
-            ('flow.by_weight', True, 'weight', float),
-            ('pressure.pressure', True, 'pressure', float),
-            ('app.data.settings.drink_weight', True, None, float),
-            ('app.data.settings.drink_tds', True, None, float),
-            ('app.data.settings.calibration_flow_multiplier', True, None, float)
-        ]
-
         data = dict()
-        required_fields = len([filter(lambda l: l[1], labels)])
+        required_fields = len([filter(lambda l: l[1], extr_config)])
         required_count = 0
-        for label, required, rename, cast_to in labels:
+        for label, required, rename, cast_to in extr_config:
             key = label.split('.')[-1] if rename is None else rename
             if required:
                 required_count += 1
-            val = resolve(shot_json, label)
+            val = _resolve(shot_json, label)
             if isinstance(val, list):
                 val = list(map(cast_to, val))
             else:
@@ -139,76 +160,6 @@ class Shot:
             data[key] = val
 
         if required_count < required_fields:
-            raise RuntimeError('shot file not extracted properly!')
-
-        return data
-
-    @staticmethod
-    def _extract_visualizer_html(raw_html) -> Dict[str, Union[List[Any], Any]]:
-        data = dict()
-        raw_html = raw_html.replace('<br>', '\n')
-        parsed_page = et.XML(raw_html)
-
-        # shot metadata (pattern matching)
-        output_filter_pat = re.compile('in\s+(\d+\.\d+)s')
-        weight_pat = re.compile('(\d{1,2}(\.\d+){0,1}g:){0,1}(\d{1,2}(\.\d+){0,1})g{0,1}')
-        tds_pat = re.compile('TDS\s+(\d{1,2}?(\.\d+){0,1})')
-        weight_done = False
-        tds_done = False
-        for text_div in filter(lambda d: d.text and len(d.text) != 0, parsed_page.iter('div')):
-            # <div>21.0g:46.8g (1:2.2) in 62.9s</div>
-            # <div>41.7g in 35.1s</div>
-            if output_filter_pat.search(text_div.text):
-                weight_match = weight_pat.match(text_div.text)
-                if weight_match:
-                    weight_str = weight_match.group(3)
-                    data['drink_weight'] = float(weight_str)
-                    weight_done = True
-            # <div>TDS 9.66%  EY 21.53% </div>
-            tds_match = tds_pat.match(text_div.text)
-            if tds_match:
-                tds_str = tds_match.group(1)
-                data['drink_tds'] = float(tds_str)
-                tds_done = True
-
-            if weight_done and tds_done:
-                break
-
-        # shot plotting data
-        # <script> ... window.shotData = [{...}] ... </script>
-        raw_json = None
-        for script in filter(lambda e: e.text is not None, parsed_page.iter('script')):
-            p = js_parser.parseScript(script.text, {'range': True})
-            for stmt in p.body:
-                if isinstance(stmt, ExpressionStatement) and isinstance(stmt.expression, AssignmentExpression):
-                    lhs_b, lhs_e = stmt.expression.left.range
-                    if script.text[lhs_b:lhs_e] == 'window.shotData':
-                        rhs_b, rhs_e = stmt.expression.right.range
-                        shot_data_raw = script.text[rhs_b:rhs_e]
-                        raw_json = json.loads(shot_data_raw)
-                        break
-            if raw_json:
-                break
-
-        # time, pressure, flow, weight
-        labels = {
-            # time series from unpacked data pair
-            'Pressure': 'pressure',
-            'Flow': 'flow',
-            'Weight Flow': 'weight'
-        }
-        time_s = list()
-        need_time_series = True
-        for label, label_to in labels.items():
-            if label_to not in data:
-                data[label_to] = list()
-            for item in raw_json:
-                if item['name'] == label:
-                    for t_ms, val in item['data']:
-                        if need_time_series:
-                            time_s.append(t_ms / 1000.0)
-                        data[label_to].append(0.0 if val is None else val)
-                    need_time_series = False
-        data['elapsed'] = time_s
+            raise RuntimeError('shot data extraction failed!')
 
         return data
