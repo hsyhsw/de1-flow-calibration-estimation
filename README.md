@@ -12,22 +12,20 @@ Method 1: upload your shot or designate a URL at [visualizer.coffee](https://vis
 
 Method 2: direct import then autorun from visualizer.coffee
 - Visit following URL with required params configured
-  - Replace ```{shot_url}``` with a shot viewing URL at visualizer.coffee **(do not omit opening/closing qoutes)**
+  - Replace ```{shot_id}``` with a shot id at visualizer.coffee **(do not omit opening/closing qoutes)**
   - Use ```verbose=True``` to view verbose graph, ```verbose=False``` otherwise
   - ```URL_ENCODE(...)``` is to be programatically processed after putting all params
 ```
-https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=URL_ENCODE(notebooks/flowcorrection_nb.ipynb?autorun=true&verbose={True/False}&shot_url='{shot_url}')
+https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=URL_ENCODE(notebooks/flowcorrection_nb.ipynb?autorun=true&verbose={True/False}&shot_id='{shot_id}')
 ```
 Complete example:
 ```
-shot_url: https://visualizer.coffee/shots/b02cc21c-eacc-4e9e-835a-af4d650aa3f4
+shot_id: b02cc21c-eacc-4e9e-835a-af4d650aa3f4
 verbose: True
 
-> URL_ENCODE("notebooks/flowcorrection_nb.ipynb?autorun=true&verbose=True&shot_url='https://visualizer.coffee/shots/b02cc21c-eacc-4e9e-835a-af4d650aa3f4'")
-> notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_url%3D%27https%3A%2F%2Fvisualizer.coffee%2Fshots%2Fb02cc21c-eacc-4e9e-835a-af4d650aa3f4%27
-
-Complete URL:
-https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_url%3D%27https%3A%2F%2Fvisualizer.coffee%2Fshots%2Fb02cc21c-eacc-4e9e-835a-af4d650aa3f4%27
+> URL_ENCODE("notebooks/flowcorrection_nb.ipynb?autorun=true&verbose=True&shot_id='b02cc21c-eacc-4e9e-835a-af4d650aa3f4'")
+> notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_id%3D%27b02cc21c-eacc-4e9e-835a-af4d650aa3f4%27
+https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_id%3D%27b02cc21c-eacc-4e9e-835a-af4d650aa3f4%27
 ```
 
 ---
