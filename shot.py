@@ -9,10 +9,13 @@ class Shot:
     DO_NOT_TRIM_KEY = 'DO_NOT_TRIM'  # XXX: tcl hack
 
     def __init__(self, shot_values: Dict[str, Union[List[Any], Any]]):
-        if isinstance(shot_values['timestamp'], str):
-            self.shot_time = shot_values['timestamp']
+        if 'timestamp' in shot_values:
+            if isinstance(shot_values['timestamp'], str):
+                self.shot_time = shot_values['timestamp']
+            else:
+                self.shot_time = time.ctime(shot_values['timestamp'])
         else:
-            self.shot_time = time.ctime(shot_values['timestamp'])
+            self.shot_time = 'UNKNOWN'
         self.elapsed: List[float] = shot_values['elapsed']
         self.pressure: List[float] = shot_values['pressure']
         self.flow: List[float] = shot_values['flow']
@@ -80,7 +83,7 @@ class Shot:
             raise RuntimeError('failed to fetch shot at %s' % url)
 
         config = [  # (label_path_str, required_bool, rename_to_str, cast_to_type)
-            ('start_time', True, 'timestamp', str),
+            ('start_time', False, 'timestamp', str),
             ('timeframe', True, 'elapsed', float),
             ('data.espresso_flow', True, 'flow', float),
             ('data.espresso_flow_weight', True, 'weight', float),
@@ -150,14 +153,20 @@ class Shot:
         required_count = 0
         for label, required, rename, cast_to in extr_config:
             key = label.split('.')[-1] if rename is None else rename
-            if required:
-                required_count += 1
-            val = _resolve(shot_json, label)
-            if isinstance(val, list):
-                val = list(map(cast_to, val))
-            else:
-                val = cast_to(val)
-            data[key] = val
+            try:
+                val = _resolve(shot_json, label)
+                if required:
+                    required_count += 1
+                if isinstance(val, list):
+                    val = list(map(cast_to, val))
+                else:
+                    val = cast_to(val)
+                data[key] = val
+            except Exception as e:
+                if required:
+                    raise e
+                else:
+                    pass  # swallow it
 
         if required_count < required_fields:
             raise RuntimeError('shot data extraction failed!')
