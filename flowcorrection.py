@@ -21,25 +21,26 @@ def eq_within(v1, v2, margin=0.005):
 
 
 class Analysis:
-    def __init__(self, s: Shot, weight_threshold: float = 0.8):
+    def __init__(self, s: Shot, weight_threshold: float = 0.8, extraction_threshold: float = 0.2):
         self.shot = s
-
-        try:  # using 'logged' gravimetric flow (same as before)
-            self._tds_effect = self._make_tds_effect(False)
-        except RuntimeError as e:
-            print('WARNING: trying with raw cumulative weight')
-            if hasattr(self.shot, 'weight_accum_raw'):  # using 'derived' gravimetric flow
-                self._erroneous_weight = self.shot.weight  # backup old weight values
-                self._tds_effect = self._make_tds_effect(True)
-            else:
-                raise e
 
         smoothed_weight = self._smoothing(s.weight)
         self._stable_weight_t = self._stable_weight_time_begin(s.elapsed, smoothed_weight, weight_threshold)
         self._initial_window = (self._stable_weight_t + 0.5, s.elapsed[-1] - 1.5)
-        self._resistance = self._calculate_resistance()
+        self._resistance = self._calculate_resistance(extraction_threshold)
 
-        self._diffs = self._calculate_difference(s.elapsed, s.flow, s.weight, self._stable_weight_t)
+        try:  # using 'logged' gravimetric flow (same as before)
+            self._tds_effect = self._make_tds_effect(False, extraction_threshold)
+        except RuntimeError as e:
+            print('WARNING: trying with raw cumulative weight')
+            if hasattr(self.shot, 'weight_accum_raw'):  # using 'derived' gravimetric flow
+                self._erroneous_weight = self.shot.weight  # backup old weight values
+                self._tds_effect = self._make_tds_effect(True, extraction_threshold)
+            else:
+                raise e
+
+        self._gravimetric_water = [w - tw for w, tw in zip(self.shot.weight, self._tds_effect)]
+        self._diffs = self._calculate_difference(s.elapsed, s.flow, self._gravimetric_water, self._stable_weight_t)
 
         self._calculate_optimal_preped = partial(self._estimate_optimal, s.elapsed, s.flow, s.weight, self._tds_effect, self._diffs)
         self._corr_suggestion = self._calculate_optimal_preped(self._initial_window)
@@ -62,12 +63,6 @@ class Analysis:
         time_series = self.shot.elapsed
 
         self._flow_plt, = plt.plot(time_series, self.shot.flow, label='flow (ml/s)', color='blue', lw=3.5)
-        if verbose:
-            plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
-            resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
-            resistance.set_ydata(self._resistance)
-            plt.plot(time_series, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
-            plt.plot(time_series, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy', linestyle='dashed')
         plt.plot(time_series, self.shot.pressure, label='pressure (bar)', color='green')
 
         # derived things
@@ -75,8 +70,7 @@ class Analysis:
             plt.plot(time_series, self._erroneous_weight, label='error weight (g/s)', color='brown', alpha=0.6, linestyle='dashed')
         # tds_ratio = [(tw / w * 100) for tw, w in zip(self._tds_effect, self._smoothing(self.shot.weight, 21))]
         # plt.plot(time_series, tds_ratio, label='TDS ratio (%)')
-        gravimetric_water = [w - tw for w, tw in zip(self.shot.weight, self._tds_effect)]
-        plt.plot(time_series, gravimetric_water, label='measured water (g/s)', color='brown', lw=2)
+        plt.plot(time_series, self._gravimetric_water, label='measured water (g/s)', color='brown', lw=2)
 
         self._error_line, = plt.plot(time_series, [0.0] * len(time_series), label='error (x10)', color='grey')
         error_data = self._error_series(self.shot.flow, self._stable_weight_t, 10)
@@ -84,6 +78,13 @@ class Analysis:
 
         self._sugg_line = plt.axhline(self._corr_suggestion * 10, label='suggestion (x10)', color='pink', linestyle='dashed')
         self._corr_line = plt.axhline(10.0, label='correction (x10)', color='magenta', linestyle='dotted')
+
+        if verbose:
+            plt.plot(time_series, self.shot.weight, label='weight (g/s)', color='orange', linestyle='dashed')
+            resistance, = plt.plot(time_series, [0.0] * len(time_series), label='resistance', color='yellow')
+            resistance.set_ydata(self._resistance)
+            plt.plot(time_series, [v * 10 for v in self._diffs], label='difference (x10)', color='red')
+            plt.plot(time_series, [v * 10 for v in self._tds_effect], label='TDS weight (g/s, x10)', color='navy', linestyle='dashed')
 
         self._window_fill = self._x_axis.axvspan(*self._initial_window, ymin=0.0, ymax=1.0, alpha=0.15, color='green')
 
@@ -121,11 +122,11 @@ class Analysis:
         self._x_axis.legend()
         plt.show()
 
-    def _calculate_resistance(self):
+    def _calculate_resistance(self, extraction_threshold: float):
         r = list()
         # using weight, not flow
         for (_w, _p) in zip(self._smoothing(self.shot.weight, 15), self._smoothing(self.shot.pressure)):
-            if _w > 0:
+            if _w > extraction_threshold:
                 r.append(_p ** 0.5 / _w)
             else:
                 r.append(0.0)
@@ -137,11 +138,12 @@ class Analysis:
             dat.append(magnifier * abs(z[1] - z[2] - z[3]) if from_t <= z[0] else 0.0)
         return self._smoothing(dat, 15)
 
-    def _make_tds_effect(self, cindy_rescue: bool, extraction_threshold_weight=0.2):
+    def _make_tds_effect(self, cindy_rescue: bool, extraction_threshold_weight):
         tds_series = list()
         in_extraction = False
         times = list()
         weights = list()
+        resists = list()
         if cindy_rescue:
             scale_factor, scaled = self._try_scaling_to_beverage_weight(self.shot.elapsed, self.shot.weight, self.shot.bw)
             self.shot.weight = scaled
@@ -149,7 +151,7 @@ class Analysis:
             if 0:  # old approximation method
                 accum_restored = self._from_raw_scale_weight(self.shot.weight_accum_raw, self.shot.elapsed, self.shot.weight, scale_factor)
                 self.shot.weight = accum_restored
-        for t, w in zip(*self._smoothing((self.shot.elapsed, self.shot.weight))):
+        for t, w, r in zip(*self._smoothing((self.shot.elapsed, self.shot.weight)), self._resistance):
             # collect weight vals after extraction phase starts
             if not in_extraction and extraction_threshold_weight <= w:
                 in_extraction = True
@@ -158,7 +160,8 @@ class Analysis:
             else:
                 times.append(t)
                 weights.append(w)
-        return tds_series + self._guessimate_to_tds_weight(times, weights)
+                resists.append(r)
+        return tds_series + self._guessimate_to_tds_weight(times, weights, resists)
 
     @staticmethod
     def _try_scaling_to_beverage_weight(elapsed_time: List[float], gravimetric_flow: List[float], beverage_weight: float):
@@ -216,15 +219,14 @@ class Analysis:
         print('WARNING: shot now weighs %.02fg' % integration.trapz(derivative, dx=dt))
         return [0.0] + derivative
 
-    def _guessimate_to_tds_weight(self, t, w) -> List[float]:
+    def _guessimate_to_tds_weight(self, t, w, r) -> List[float]:
         target_tds_weight = self.shot.bw * self.shot.tds / 100.0
         t_begin = t[0]
         t_end = t[-1]
         t_span = t_end - t_begin
 
-        # TODO: use resistance curve to estimate puck degradation more precisely
-        def puck_degradation(t: float) -> float:  # degradation = (begin) 1.0 ... 0.1 (end)
-            return -0.9 / t_span * (t - t_begin) + 1.0
+        def puck_degradation(t: float) -> float:
+            return 1.0 - 0.7 / t_span * (t - t_begin)
         integral_cumul = [0.0] + list(v for v in integration.cumtrapz(w, t))
         if not eq_within(self.shot.bw, integral_cumul[-1], self.shot.bw * 0.2):
             raise RuntimeError('Too much error between beverage weight: %.02fg, cumulative weight: %.02fg' % (self.shot.bw, integral_cumul[-1]))
@@ -234,11 +236,11 @@ class Analysis:
             dw = w1 - w0
             dt = t[idx + 1] - t[idx]
             ratio = dw / integral_cumul[-1]  # take ratio of tds in the current weight "shard"
-            tds_weight_curve.append(ratio * target_tds_weight / dt * puck_degradation(t[idx]))
+            tds_weight_curve.append(ratio * target_tds_weight / dt * (r[idx] ** 0.5) * puck_degradation(t[idx]))
         tds_weight_curve = tds_weight_curve
         tds_weight_degraded = integration.simpson(tds_weight_curve, t[1:])
-        weight_loss = tds_weight_degraded / target_tds_weight
-        return Analysis._smoothing([0.0] + [w / weight_loss for w in tds_weight_curve])
+        weight_scale = tds_weight_degraded / target_tds_weight
+        return Analysis._smoothing([0.0] + [w / weight_scale for w in tds_weight_curve])
 
     def _update_flow(self, base_flow: List[float], correction_val: float):
         new_flow = [val * correction_val for val in base_flow]
