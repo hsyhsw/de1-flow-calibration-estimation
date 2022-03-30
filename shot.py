@@ -4,6 +4,8 @@ import time
 import requests
 import requests.status_codes
 
+from util import eq_within
+
 
 class Shot:
     DO_NOT_TRIM_KEY = 'DO_NOT_TRIM'  # XXX: tcl hack
@@ -70,7 +72,7 @@ class Shot:
         return Shot(Shot._trim_vectors(extr))
 
     @staticmethod
-    def parse_visualizer(url: str):
+    def parse_visualizer(url: str, current_calibration: float):
         def _to_api_url(page_url: str) -> str:
             """
             https://visualizer.coffee/shots/{id} --> https://visualizer.coffee/api/shots/{id}/download
@@ -92,6 +94,8 @@ class Shot:
             ('drink_tds', False, None, float),
         ]
         extr = Shot._extract_raw_json(json.loads(resp.text), config)
+        if not eq_within(current_calibration, 0.0):
+            extr['calibration_flow_multiplier'] = current_calibration
 
         return Shot(Shot._trim_vectors(extr))
 

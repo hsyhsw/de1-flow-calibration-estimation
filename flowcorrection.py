@@ -14,10 +14,7 @@ import scipy.integrate as integration
 import matplotlib
 
 from shot import Shot
-
-
-def eq_within(v1, v2, margin=0.005):
-    return v2 - margin < v1 < v2 + margin
+from util import eq_within
 
 
 class Analysis:
