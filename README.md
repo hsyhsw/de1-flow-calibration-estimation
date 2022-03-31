@@ -1,9 +1,12 @@
 # de1-flow-calibration-estimation
 
-## Try online version!
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue)
+Estimate (quite accurate) flow calibration multiplier for your DE1 espresso machine **without the puck simulator**.
+All you need is a shot history **with the weight data from a Bluetooth scale**!
+Why pay extra just for the calibration number? 
 
-https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue
+---
+
+## Available at [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue)
 
 Method 1: upload your shot or designate a URL at [visualizer.coffee](https://visualizer.coffee)
 1. Wait until it is fully loaded. (it may take a minute or so.)
@@ -29,24 +32,6 @@ current_calibration: 0.9
 > notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_id%3D%27b02cc21c-eacc-4e9e-835a-af4d650aa3f4%27%26current_calibration%3D0.9
 https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue%26verbose%3DTrue%26shot_id%3D%27b02cc21c-eacc-4e9e-835a-af4d650aa3f4%27%26current_calibration%3D0.9
 ```
-
----
-
-Use python 3.8+ with following packages:
-- matplotlib
-- scipy
-- numpy
-- requests
-
-``` 
-(venv) de1-flow-calibration-estimation> python -m flowcorrection [-h] [--verbose] [--visualizer [VISUALIZER_URL] | --file [FILE]]
-```
-- `--verbose, -v`: show verbose graph with a lot of messy stuffs! (if you're nerdy enough)
-- `--visualizer [URL]`: specify shot URL on the visualizer site (or will be asked) 
-- `--file [PATH]`: specify a shot file (or will be asked)
-- or without any option: you'll be asked to pick a shot file
-
-Sample shots are available in the example directory.
 
 ## Simple (or maybe too verbose) Guide
 
@@ -86,3 +71,22 @@ Pick a shot that meets following requirements:
     ![move_correction_line](figure_correction.png)   
 
 1. Use the correction value just found as a starting point finding flow calibration value in the DE1 app.
+
+---
+
+Use python 3.8+ with following packages:
+- matplotlib
+- scipy
+- numpy
+- requests
+
+``` 
+(venv) de1-flow-calibration-estimation> python -m flowcorrection [-h] [--verbose] [--visualizer [VISUALIZER_URL] | --file [FILE]] [--current-calibration CURRENT_CALIBRATION]
+```
+- `--verbose, -v`: show verbose graph with a lot of messy stuffs! (if you're nerdy enough)
+- `--visualizer [VISUALIZER_URL]`: specify shot URL on the visualizer site (or will be asked)
+- `--file [FILE]`: specify a shot file (or will be asked) 
+- `--current-calibration CURRENT_CALIBRATION, -c CURRENT_CALIBRATION`: current calibration value from Settings>Machine>Calibrate>Flow (Visualizer mode only)  
+- or without any option: you'll be asked to pick a shot file
+
+Sample shots are available in the example directory.

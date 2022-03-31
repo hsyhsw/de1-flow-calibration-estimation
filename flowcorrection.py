@@ -305,18 +305,22 @@ if __name__ == '__main__':
                         help='take shot history from visualizer.coffee')
     mutex_g.add_argument('--file', action='store', nargs='?', const='?', default=None,
                         help='take shot history from a file')
+    parser.add_argument('--current-calibration', '-c', dest='current_calibration', action='store', default=0.0, type=float,
+                        help='current calibration value from Settings>Machine>Calibrate>Flow (Visualizer mode only)')
     args = parser.parse_args()
 
     if args.visualizer_url:
         if args.visualizer_url == '?':
             tkinter.Tk()
             url = simpledialog.askstring('shot URL', 'Enter URL of the shot: (https://...)\t\t\t\t\t')
+            current_cal = simpledialog.askfloat('current calibration', 'Value of Settings>Machine>Calibrate>Flow\t\t')
         else:
             url = args.visualizer_url
+            current_cal = args.current_calibration
 
         if not url.startswith('http://') and not url.startswith('https://'):
             raise RuntimeError('invalid shot url!')
-        s = Shot.parse_visualizer(url)
+        s = Shot.parse_visualizer(url, current_cal)
         Analysis(s).show(True, args.verbose)
         exit(0)
 
