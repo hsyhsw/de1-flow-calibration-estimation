@@ -8,7 +8,8 @@ setup(
         'matplotlib',
         'scipy',
         'numpy',
-        'requests'
+        'requests',
+        'jupyter'
     ],
     py_modules=[
         'flowcorrection',
