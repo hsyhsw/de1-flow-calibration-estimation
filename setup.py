@@ -10,6 +10,11 @@ setup(
         'numpy',
         'requests'
     ],
+    py_modules=[
+        'flowcorrection',
+        'shot',
+        'util'
+    ],
     url='',
     license='',
     author='Eddie',
