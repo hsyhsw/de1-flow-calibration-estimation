@@ -9,7 +9,9 @@ setup(
         'scipy',
         'numpy',
         'requests',
-        'jupyter'
+        'jupyter',
+        'ipympl',
+        'nb-clean'
     ],
     py_modules=[
         'flowcorrection',

@@ -1,3 +1,5 @@
+import math
+
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from matplotlib.widgets import Button
@@ -124,7 +126,10 @@ class Analysis:
         # using weight, not flow
         for (_w, _p) in zip(self._smoothing(self.shot.weight, 15), self._smoothing(self.shot.pressure)):
             if _w > extraction_threshold:
-                r.append(_p ** 0.5 / _w)
+                if _p < 0:
+                    r.append(0.0)
+                else:
+                    r.append(_p ** 0.5 / _w)
             else:
                 r.append(0.0)
         return r
@@ -233,8 +238,7 @@ class Analysis:
             dw = w1 - w0
             dt = t[idx + 1] - t[idx]
             ratio = dw / integral_cumul[-1]  # take ratio of tds in the current weight "shard"
-            tds_weight_curve.append(ratio * target_tds_weight / dt * (r[idx] ** 0.5) * puck_degradation(t[idx]))
-        tds_weight_curve = tds_weight_curve
+            tds_weight_curve.append(float(ratio * target_tds_weight / dt * (r[idx] ** 0.5) * puck_degradation(t[idx])))
         tds_weight_degraded = integration.simpson(tds_weight_curve, t[1:])
         weight_scale = tds_weight_degraded / target_tds_weight
         return Analysis._smoothing([0.0] + [w / weight_scale for w in tds_weight_curve])
