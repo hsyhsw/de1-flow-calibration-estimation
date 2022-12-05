@@ -10,6 +10,7 @@ setup(
         'numpy',
         'requests',
         'jupyter',
+        'jupyter-notebookparams',
         'ipympl',
         'nb-clean'
     ],
