@@ -8,8 +8,11 @@ Why pay extra just for the calibration number?
 
 ## Available at [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hsyhsw/de1-flow-calibration-estimation/HEAD?urlpath=notebooks%2Fflowcorrection_nb.ipynb%3Fautorun%3Dtrue)
 
-Method 1: upload your shot or designate a URL at [visualizer.coffee](https://visualizer.coffee)
+Method 1: upload your shot or provide a URL at [visualizer.coffee](https://visualizer.coffee)
 1. Wait until it is fully loaded. (it may take a minute or so.)
+    - **Currently, there's a bug that autorun does not render all the components. After it loads, click on the rerun button at the top and confirm then you're ready!**
+
+      ![autorun_bug](nb_bug_rerun.png)
 1. Scroll down to the bottom, you'll see the program running.
 1. Upload .shot file or take a URL from the visualizer.
 
